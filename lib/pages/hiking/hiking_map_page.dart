@@ -1,16 +1,17 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
-import 'package:amap_flutter/amap_flutter.dart' as amap;
-import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'sos_button.dart';
 import 'route_feedback_page.dart';
 import 'ask_question_page.dart';
 import 'hiking_history_page.dart';
 
 /// HikingMapPage - 徒步地图页面
-/// 应用的核心页面，显示高德地图，支持实时定位、徒步轨迹记录等功能
+/// 应用的核心页面，使用flutter_map显示地图，支持实时定位、徒步轨迹记录等功能
 class HikingMapPage extends StatefulWidget {
   const HikingMapPage({super.key});
 
@@ -18,9 +19,10 @@ class HikingMapPage extends StatefulWidget {
   State<HikingMapPage> createState() => _HikingMapPageState();
 }
 
-class _HikingMapPageState extends State<HikingMapPage> {
-  // 地图控制器，用于控制地图移动、添加标记等操作
-  amap.AMapController? _mapController;
+class _HikingMapPageState extends State<HikingMapPage>
+    with WidgetsBindingObserver {
+  // 地图控制器
+  final MapController _mapController = MapController();
   // 地图是否准备就绪
   bool _isMapReady = false;
   // 是否正在初始化（显示加载界面）
@@ -28,72 +30,71 @@ class _HikingMapPageState extends State<HikingMapPage> {
   // 错误信息（初始化失败时显示）
   String? _errorMessage;
 
-  // 当前用户位置
-  amap.Position? _position;
+  // 当前用户位置（使用LatLng格式）
+  LatLng? _position;
   // 徒步状态：IDLE（空闲）、RUNNING（进行中）、PAUSED（暂停）
   String _hikingState = 'IDLE';
   // 是否激活SOS模式
   bool _isSOSActive = false;
 
   // 计时器相关变量
-  Timer? _timer; // 定时器，用于更新徒步时长
-  DateTime? _startTime; // 徒步开始时间
-  Duration _accumulatedDuration = Duration.zero; // 累计时间（暂停时保存）
-  Duration _currentDuration = Duration.zero; // 当前显示的时间
+  Timer? _timer;
+  DateTime? _startTime;
+  Duration _accumulatedDuration = Duration.zero;
+  Duration _currentDuration = Duration.zero;
 
   // 轨迹相关变量
-  final List<amap.Position> _pathPoints = []; // 徒步路径点列表
-  amap.Marker? _positionMarker; // 当前位置标记
-  final List<amap.Marker> _routeMarkers = []; // 路径标记列表
-  final List<amap.Marker> _markers = []; // 所有标记列表
-  bool _isTrackingLocation = false; // 是否正在追踪位置
+  final List<LatLng> _pathPoints = [];
+  bool _isTrackingLocation = false;
 
   // 位置更新流订阅
   StreamSubscription<Position>? _locationSubscription;
 
-  /// initState - 组件初始化
-  /// 延迟初始化，避免在widget未完全构建时崩溃
+  // 初始地图位置（北京）
+  static const LatLng _defaultPosition = LatLng(39.9042, 116.4074);
+
   @override
   void initState() {
     super.initState();
-    // 延迟执行初始化，确保在组件构建完成后调用
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initialize();
     });
   }
 
-  /// _initialize - 初始化方法
-  /// 1. 初始化高德地图 2. 请求定位权限 3. 初始化定位服务
-  Future<void> _initialize() async {
-    try {
-      // 初始化高德地图，配置API密钥
-      await amap.AMapFlutter.init(
-        apiKey: amap.ApiKey(
-          androidKey: '4bf8b27c0d66ef2fce72e133db777349',
-          iosKey: '173b139f4b0710330132c496bf45ece1',
-          webKey: '1f67dc45ef1c30121049a15d27edf12e',
-        ),
-        agreePrivacy: true, // 同意隐私协议
-      );
-      debugPrint('AMap initialized successfully');
-    } catch (e) {
-      debugPrint('AMap init error: $e');
-      if (mounted) {
-        setState(() {
-          _errorMessage = '地图初始化失败: $e';
-          _isInitializing = false;
-        });
-      }
-      return;
-    }
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _timer?.cancel();
+    _locationSubscription?.cancel();
+    _mapController.dispose();
+    super.dispose();
+  }
 
-    if (!mounted) return;
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    debugPrint('App lifecycle state: $state');
+  }
+
+  /// _initialize - 初始化方法
+  /// 1. 请求定位权限 2. 初始化定位服务
+  Future<void> _initialize() async {
+    debugPrint('Starting initialization...');
 
     try {
       // 请求位置权限
       final status = await Permission.location.request();
+      debugPrint('Location permission: $status');
+
       if (status.isGranted && mounted) {
-        _initLocation(); // 初始化定位服务
+        _initLocation();
+      } else if (status.isDenied) {
+        // 权限被拒绝，显示提示
+        if (mounted) {
+          setState(() {
+            _errorMessage = '需要位置权限才能使用地图功能';
+          });
+        }
       }
     } catch (e) {
       debugPrint('Permission error: $e');
@@ -107,46 +108,39 @@ class _HikingMapPageState extends State<HikingMapPage> {
   }
 
   /// _initLocation - 初始化定位服务
-  /// 启动位置监听，获取实时位置更新
   void _initLocation() async {
     if (!mounted) return;
     try {
-      // 启动位置更新流，持续监听位置变化
+      // 检查定位服务是否开启
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        debugPrint('Location service not enabled');
+        return;
+      }
+
+      // 启动位置更新流
       _locationSubscription =
           Geolocator.getPositionStream(
             locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.high, // 高精度定位
-              distanceFilter: 5, // 移动5米以上才更新
+              accuracy: LocationAccuracy.high,
+              distanceFilter: 5,
             ),
           ).listen(
             (Position position) {
               debugPrint(
-                'Location stream update: ${position.latitude}, ${position.longitude}',
+                'Location: ${position.latitude}, ${position.longitude}',
               );
-              _updateLocation(
-                amap.Position(
-                  latitude: position.latitude,
-                  longitude: position.longitude,
-                ),
-              );
+              _updateLocation(position);
             },
             onError: (error) {
               debugPrint('Location stream error: $error');
             },
           );
 
-      // 获取上次已知位置（缓存）
+      // 获取上次已知位置
       final position = await Geolocator.getLastKnownPosition();
       if (position != null && mounted) {
-        debugPrint(
-          'Initial position from cache: ${position.latitude}, ${position.longitude}',
-        );
-        _updateLocation(
-          amap.Position(
-            latitude: position.latitude,
-            longitude: position.longitude,
-          ),
-        );
+        _updateLocation(position);
       }
     } catch (e) {
       debugPrint('Error initializing location: $e');
@@ -154,51 +148,33 @@ class _HikingMapPageState extends State<HikingMapPage> {
   }
 
   /// _updateLocation - 更新位置
-  /// 参数：newPos 新的位置坐标
-  /// 更新当前位置，并在徒步模式下添加到路径点
-  void _updateLocation(amap.Position newPos) {
+  void _updateLocation(Position newPos) {
+    if (!mounted) return;
+
+    final newLatLng = LatLng(newPos.latitude, newPos.longitude);
+
     setState(() {
-      _position = newPos;
-      // 徒步模式下添加路径点
+      _position = newLatLng;
       if (_hikingState == 'RUNNING') {
-        _pathPoints.add(newPos);
+        _pathPoints.add(newLatLng);
       }
     });
 
     // 徒步模式下移动相机跟随位置
-    if (_hikingState == 'RUNNING' &&
-        _position != null &&
-        _mapController != null) {
-      _mapController?.moveCamera(
-        amap.CameraPosition(position: _position!, zoom: 17),
-      );
+    if (_hikingState == 'RUNNING' && _position != null) {
+      _mapController.move(_position!, 17);
     }
   }
 
   /// _locateToCurrentPosition - 定位到当前位置
-  /// 点击定位按钮时调用，获取当前位置并移动地图到该位置
   Future<void> _locateToCurrentPosition() async {
-    debugPrint('Location button pressed, starting location...');
+    debugPrint('Location button pressed');
 
-    // 检查地图控制器是否可用
-    if (_mapController == null) {
-      debugPrint('Map controller is null, cannot locate');
-      if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('地图未就绪')));
-      }
-      return;
-    }
-
-    // 检查位置权限
     var status = await Permission.location.status;
-    debugPrint('Location permission status: $status');
     if (!status.isGranted) {
       status = await Permission.location.request();
       if (!status.isGranted) {
-        debugPrint('Location permission denied');
-        if (context.mounted) {
+        if (mounted) {
           ScaffoldMessenger.of(
             context,
           ).showSnackBar(const SnackBar(content: Text('需要位置权限才能定位')));
@@ -207,11 +183,9 @@ class _HikingMapPageState extends State<HikingMapPage> {
       }
     }
 
-    // 检查定位服务是否开启
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    debugPrint('Location service enabled: $serviceEnabled');
     if (!serviceEnabled) {
-      if (context.mounted) {
+      if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('请开启设备定位服务')));
@@ -219,102 +193,44 @@ class _HikingMapPageState extends State<HikingMapPage> {
       return;
     }
 
-    // 显示定位中提示
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('正在定位...'),
-          duration: Duration(seconds: 1),
-        ),
-      );
-    }
-
     try {
-      // 使用Geolocator获取当前位置
-      Position? position;
-      try {
-        // 尝试获取实时位置
-        position = await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.high,
-            distanceFilter: 10,
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('正在定位...'),
+            duration: Duration(seconds: 1),
           ),
-        ).timeout(const Duration(seconds: 10));
-        debugPrint(
-          'Got fresh position: ${position.latitude}, ${position.longitude}',
         );
-      } catch (e) {
-        debugPrint('getCurrentPosition error: $e, trying last known position');
-        // 获取失败时尝试获取缓存位置
-        position = await Geolocator.getLastKnownPosition();
-        if (position != null) {
-          debugPrint(
-            'Got last known position: ${position.latitude}, ${position.longitude}',
-          );
-        }
       }
 
-      // 如果无法获取任何位置
-      if (position == null) {
-        debugPrint('Failed to get any position');
-        if (context.mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('无法获取位置，请检查GPS设置')));
-        }
-        return;
-      }
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          distanceFilter: 10,
+        ),
+      ).timeout(const Duration(seconds: 10));
 
-      // 创建AMap位置对象
-      final currentPosition = amap.Position(
-        latitude: position.latitude,
-        longitude: position.longitude,
-      );
+      if (!mounted) return;
 
-      debugPrint(
-        'Position obtained: ${currentPosition.latitude}, ${currentPosition.longitude}',
-      );
+      debugPrint('Position: ${position.latitude}, ${position.longitude}');
 
-      // 更新状态
+      final currentLatLng = LatLng(position.latitude, position.longitude);
+
       setState(() {
-        _position = currentPosition;
+        _position = currentLatLng;
         _isTrackingLocation = true;
-
-        // 清除旧标记，添加新的当前位置标记
-        _markers.clear();
-        final marker = amap.Marker(
-          id: 'current_location',
-          position: currentPosition,
-        );
-        _markers.add(marker);
-        _positionMarker = marker;
       });
 
-      debugPrint('State updated, moving camera...');
-
       // 移动地图到当前位置
-      _mapController?.moveCamera(
-        amap.CameraPosition(position: currentPosition, zoom: 17),
-      );
-      debugPrint('Camera moved to position');
+      _mapController.move(currentLatLng, 17);
 
-      // 添加标记到地图
-      final marker = amap.Marker(
-        id: 'current_location',
-        position: currentPosition,
-      );
-      _mapController?.addMarker(marker);
-      debugPrint('Marker added to map');
-
-      // 显示定位成功对话框
-      debugPrint('Location successful, showing result');
-      if (context.mounted) {
+      if (mounted) {
         showDialog(
           context: context,
           builder: (ctx) => AlertDialog(
             title: const Text('定位成功'),
             content: Text(
-              '当前位置: ${currentPosition.latitude.toStringAsFixed(4)}, ${currentPosition.longitude.toStringAsFixed(4)}',
+              '当前位置: ${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}',
             ),
             actions: [
               TextButton(
@@ -327,7 +243,7 @@ class _HikingMapPageState extends State<HikingMapPage> {
       }
     } catch (e) {
       debugPrint('Error getting location: $e');
-      if (context.mounted) {
+      if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('定位失败: $e')));
@@ -335,29 +251,20 @@ class _HikingMapPageState extends State<HikingMapPage> {
     }
   }
 
-  /// dispose - 组件销毁
-  /// 清理计时器和位置订阅
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _locationSubscription?.cancel();
-    super.dispose();
-  }
-
   /// _startTimer - 开始计时
-  /// 启动定时器更新徒步时长显示
   void _startTimer() {
     _startTime = DateTime.now();
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      setState(() {
-        final now = DateTime.now();
-        _currentDuration = _accumulatedDuration + now.difference(_startTime!);
-      });
+      if (mounted) {
+        setState(() {
+          final now = DateTime.now();
+          _currentDuration = _accumulatedDuration + now.difference(_startTime!);
+        });
+      }
     });
   }
 
   /// _pauseTimer - 暂停计时
-  /// 暂停徒步计时，保存当前累计时间
   void _pauseTimer() {
     _timer?.cancel();
     if (_startTime != null) {
@@ -367,13 +274,11 @@ class _HikingMapPageState extends State<HikingMapPage> {
   }
 
   /// _resumeTimer - 恢复计时
-  /// 继续徒步计时
   void _resumeTimer() {
     _startTimer();
   }
 
   /// _stopTimer - 停止计时
-  /// 结束徒步，重置所有计时数据
   void _stopTimer() {
     _timer?.cancel();
     if (_startTime != null) {
@@ -386,7 +291,6 @@ class _HikingMapPageState extends State<HikingMapPage> {
   }
 
   /// _formatDuration - 格式化时长
-  /// 将Duration转换为 HH:MM:SS 格式字符串
   String _formatDuration(Duration duration) {
     String twoDigits(int n) => n.toString().padLeft(2, "0");
     String twoDigitMinutes = twoDigits(duration.inMinutes.remainder(60));
@@ -396,7 +300,7 @@ class _HikingMapPageState extends State<HikingMapPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Web端显示提示信息（amap_flutter在Web端有兼容性问题）
+    // Web端显示提示信息
     if (kIsWeb) {
       return Scaffold(
         body: Stack(
@@ -422,14 +326,12 @@ class _HikingMapPageState extends State<HikingMapPage> {
                 ),
               ),
             ),
-            // 顶部信息栏
             Positioned(
               top: MediaQuery.of(context).padding.top + 10,
               left: 16,
               right: 16,
               child: _buildTopInfoBar(),
             ),
-            // 底部操作栏
             Positioned(
               bottom: 0,
               left: 0,
@@ -448,9 +350,9 @@ class _HikingMapPageState extends State<HikingMapPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              CircularProgressIndicator(color: Color(0xFF2E7D32)),
-              SizedBox(height: 16),
-              Text('正在加载地图...'),
+              const CircularProgressIndicator(color: Color(0xFF2E7D32)),
+              const SizedBox(height: 16),
+              const Text('正在加载...'),
             ],
           ),
         ),
@@ -462,19 +364,19 @@ class _HikingMapPageState extends State<HikingMapPage> {
       return Scaffold(
         body: Center(
           child: Padding(
-            padding: EdgeInsets.all(24),
+            padding: const EdgeInsets.all(24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.error_outline, size: 64, color: Colors.red),
-                SizedBox(height: 16),
-                Text(
+                const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                const SizedBox(height: 16),
+                const Text(
                   '出错了',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
-                SizedBox(height: 8),
+                const SizedBox(height: 8),
                 Text(_errorMessage!, textAlign: TextAlign.center),
-                SizedBox(height: 24),
+                const SizedBox(height: 24),
                 ElevatedButton(
                   onPressed: () {
                     setState(() {
@@ -483,7 +385,7 @@ class _HikingMapPageState extends State<HikingMapPage> {
                     });
                     _initialize();
                   },
-                  child: Text('重试'),
+                  child: const Text('重试'),
                 ),
               ],
             ),
@@ -498,46 +400,66 @@ class _HikingMapPageState extends State<HikingMapPage> {
         children: [
           // 地图区域
           Positioned.fill(
-            child: Container(
-              color: Colors.grey[200],
-              child: SafeArea(
-                bottom: false,
-                child: amap.AMapFlutter(
-                  // 设置地图类型为标准地图
-                  mapType: amap.MapType.standard,
-                  // 初始相机位置（北京）
-                  initCameraPosition: amap.CameraPosition(
-                    position: amap.Position(
-                      latitude: 39.9042,
-                      longitude: 116.4074,
-                    ),
-                    zoom: 15,
-                  ),
-                  // 地图创建完成回调
-                  onMapCreated: (controller) {
-                    debugPrint(
-                      'AMap: onMapCreated, mapId: ${controller.mapId}',
-                    );
-                    _mapController = controller;
-                    if (mounted) {
-                      setState(() {
-                        _isMapReady = true;
-                      });
-                    }
-                  },
-                  // 地图完全加载回调
-                  onMapCompleted: () {
-                    debugPrint(
-                      'AMap: onMapCompleted - Map loaded successfully',
-                    );
-                    if (_position != null) {
-                      _mapController?.moveCamera(
-                        amap.CameraPosition(position: _position!, zoom: 17),
-                      );
-                    }
-                  },
-                ),
+            child: FlutterMap(
+              mapController: _mapController,
+              options: MapOptions(
+                initialCenter: _position ?? _defaultPosition,
+                initialZoom: 15,
+                onMapReady: () {
+                  debugPrint('Map is ready');
+                  setState(() {
+                    _isMapReady = true;
+                  });
+                },
               ),
+              children: [
+                // 地图图层 - 使用OpenStreetMap
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.solitary.solitary',
+                ),
+                // 徒步轨迹线
+                if (_pathPoints.isNotEmpty)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: _pathPoints,
+                        color: const Color(0xFF2E7D32),
+                        strokeWidth: 4,
+                      ),
+                    ],
+                  ),
+                // 当前位置标记
+                if (_position != null)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: _position!,
+                        width: 40,
+                        height: 40,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2E7D32),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 3),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.3),
+                                blurRadius: 6,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.person,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+              ],
             ),
           ),
 
@@ -572,7 +494,6 @@ class _HikingMapPageState extends State<HikingMapPage> {
   }
 
   /// _buildTopInfoBar - 构建顶部信息栏
-  /// 显示GPS状态、徒步时长或准备出发提示
   Widget _buildTopInfoBar() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -610,7 +531,6 @@ class _HikingMapPageState extends State<HikingMapPage> {
               ),
             ],
           ),
-
           // 徒步时长或状态提示
           if (_hikingState != 'IDLE')
             Column(
@@ -620,7 +540,6 @@ class _HikingMapPageState extends State<HikingMapPage> {
                   style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
-                    fontFeatures: [FontFeature.tabularFigures()],
                   ),
                 ),
                 const Text(
@@ -634,7 +553,6 @@ class _HikingMapPageState extends State<HikingMapPage> {
               '准备出发',
               style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold),
             ),
-
           // SOS状态指示
           if (_isSOSActive)
             Container(
@@ -660,22 +578,17 @@ class _HikingMapPageState extends State<HikingMapPage> {
   }
 
   /// _buildRightToolbar - 构建右侧工具栏
-  /// 包含图层、定位、群组、反馈、帮助等按钮
   Widget _buildRightToolbar() {
     return Column(
       children: [
-        // 图层按钮
         _buildToolButton(Icons.layers, () {}),
         const SizedBox(height: 12),
-        // 定位按钮
         _buildToolButton(Icons.my_location, () {
           _locateToCurrentPosition();
         }),
         const SizedBox(height: 12),
-        // 群组按钮（带徽章）
         _buildToolButton(Icons.group, () {}, badgeCount: 3),
         const SizedBox(height: 12),
-        // 路线反馈按钮
         _buildToolButton(Icons.add_comment, () {
           Navigator.push(
             context,
@@ -683,7 +596,6 @@ class _HikingMapPageState extends State<HikingMapPage> {
           );
         }),
         const SizedBox(height: 12),
-        // 帮助按钮
         _buildToolButton(Icons.help_outline, () {
           Navigator.push(
             context,
@@ -695,7 +607,6 @@ class _HikingMapPageState extends State<HikingMapPage> {
   }
 
   /// _buildToolButton - 构建工具栏按钮
-  /// icon: 图标, onTap: 点击回调, badgeCount: 徽章数量
   Widget _buildToolButton(
     IconData icon,
     VoidCallback onTap, {
@@ -721,7 +632,6 @@ class _HikingMapPageState extends State<HikingMapPage> {
           alignment: Alignment.center,
           children: [
             Icon(icon, color: Colors.grey[700]),
-            // 显示徽章
             if (badgeCount > 0)
               Positioned(
                 top: 0,
@@ -745,7 +655,6 @@ class _HikingMapPageState extends State<HikingMapPage> {
   }
 
   /// _buildBottomActionBar - 构建底部操作栏
-  /// 根据徒步状态显示开始/暂停/继续/结束按钮
   Widget _buildBottomActionBar() {
     return Container(
       padding: EdgeInsets.fromLTRB(
@@ -782,16 +691,9 @@ class _HikingMapPageState extends State<HikingMapPage> {
             _hikingState = 'RUNNING';
             _startTimer();
             _pathPoints.clear();
-            _routeMarkers.clear();
             _isTrackingLocation = true;
             if (_position != null) {
               _pathPoints.add(_position!);
-              // 添加起点标记
-              final marker = amap.Marker(
-                id: 'route_start',
-                position: _position!,
-              );
-              _routeMarkers.add(marker);
             }
           });
         },
@@ -819,13 +721,11 @@ class _HikingMapPageState extends State<HikingMapPage> {
   }
 
   /// _buildActiveActions - 构建徒步中的操作按钮
-  /// 显示暂停/继续和结束按钮
   Widget _buildActiveActions() {
     final isRunning = _hikingState == 'RUNNING';
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        // 暂停/继续按钮
         _buildCircleAction(
           icon: isRunning ? Icons.pause : Icons.play_arrow,
           label: isRunning ? '暂停' : '继续',
@@ -844,15 +744,12 @@ class _HikingMapPageState extends State<HikingMapPage> {
             });
           },
         ),
-        const SOSButton(), // SOS按钮
-        // 结束按钮
+        const SOSButton(),
         _buildCircleAction(
           icon: Icons.stop,
           label: '结束',
           color: Colors.grey,
-          onTap: () {
-            _showEndHikingDialog();
-          },
+          onTap: () => _showEndHikingDialog(),
         ),
       ],
     );
@@ -941,11 +838,7 @@ class _HikingMapPageState extends State<HikingMapPage> {
             ),
             const SizedBox(height: 48),
             ElevatedButton(
-              onPressed: () {
-                setState(() {
-                  _isSOSActive = false;
-                });
-              },
+              onPressed: () => setState(() => _isSOSActive = false),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.red,
                 padding: const EdgeInsets.symmetric(
