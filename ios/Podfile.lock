@@ -1,10 +1,4 @@
 PODS:
-  - AMap3DMap (10.1.600):
-    - AMapFoundation (>= 1.8.0)
-  - amap_flutter (0.0.1):
-    - AMap3DMap
-    - Flutter
-  - AMapFoundation (1.8.2)
   - Flutter (1.0.0)
   - geolocator_apple (1.2.0):
     - Flutter
@@ -20,7 +14,6 @@ PODS:
     - FlutterMacOS
 
 DEPENDENCIES:
-  - amap_flutter (from `.symlinks/plugins/amap_flutter/ios`)
   - Flutter (from `Flutter`)
   - geolocator_apple (from `.symlinks/plugins/geolocator_apple/darwin`)
   - image_picker_ios (from `.symlinks/plugins/image_picker_ios/ios`)
@@ -28,14 +21,7 @@ DEPENDENCIES:
   - permission_handler_apple (from `.symlinks/plugins/permission_handler_apple/ios`)
   - shared_preferences_foundation (from `.symlinks/plugins/shared_preferences_foundation/darwin`)
 
-SPEC REPOS:
-  trunk:
-    - AMap3DMap
-    - AMapFoundation
-
 EXTERNAL SOURCES:
-  amap_flutter:
-    :path: ".symlinks/plugins/amap_flutter/ios"
   Flutter:
     :path: Flutter
   geolocator_apple:
@@ -50,9 +36,6 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/shared_preferences_foundation/darwin"
 
 SPEC CHECKSUMS:
-  AMap3DMap: e67fc1a66bd83b82b44a06b601864d9fb3db3de0
-  amap_flutter: b4fb6010753fc677d1e546f7fe47281e00fe5347
-  AMapFoundation: 9885c48fc3a78fdfb84a0299a2293e56ea3c9fec
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   geolocator_apple: ab36aa0e8b7d7a2d7639b3b4e48308394e8cef5e
   image_picker_ios: e0ece4aa2a75771a7de3fa735d26d90817041326
@@ -60,6 +43,6 @@ SPEC CHECKSUMS:
   permission_handler_apple: 4ed2196e43d0651e8ff7ca3483a069d469701f2d
   shared_preferences_foundation: 7036424c3d8ec98dfe75ff1667cb0cd531ec82bb
 
-PODFILE CHECKSUM: 29273c8f8ff2e03f4b11ab60bec5a4a269f19324
+PODFILE CHECKSUM: 6d92efedd5fbb6639d09ff75fe3549f0ae3e789a
 
 COCOAPODS: 1.16.2
