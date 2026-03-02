@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:amap_flutter_map/amap_flutter_map.dart';
+import 'package:amap_flutter_base/amap_flutter_base.dart';
 import 'sos_button.dart';
 import 'route_feedback_page.dart';
 import 'ask_question_page.dart';
@@ -21,8 +21,8 @@ class HikingMapPage extends StatefulWidget {
 
 class _HikingMapPageState extends State<HikingMapPage>
     with WidgetsBindingObserver {
-  // 地图控制器
-  final MapController _mapController = MapController();
+  // AMap 控制器
+  AMapController? _amapController;
   // 地图是否准备就绪
   bool _isMapReady = false;
   // 是否正在初始化（显示加载界面）
@@ -67,7 +67,7 @@ class _HikingMapPageState extends State<HikingMapPage>
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _locationSubscription?.cancel();
-    _mapController.dispose();
+    _amapController?.disponse();
     super.dispose();
   }
 
@@ -162,7 +162,7 @@ class _HikingMapPageState extends State<HikingMapPage>
 
     // 徒步模式下移动相机跟随位置
     if (_hikingState == 'RUNNING' && _position != null) {
-      _mapController.move(_position!, 17);
+      _amapController?.moveCamera(CameraUpdate.newLatLngZoom(_position!, 17));
     }
   }
 
@@ -222,7 +222,7 @@ class _HikingMapPageState extends State<HikingMapPage>
       });
 
       // 移动地图到当前位置
-      _mapController.move(currentLatLng, 17);
+      _amapController?.moveCamera(CameraUpdate.newLatLngZoom(currentLatLng, 17));
 
       if (mounted) {
         showDialog(
@@ -300,48 +300,7 @@ class _HikingMapPageState extends State<HikingMapPage>
 
   @override
   Widget build(BuildContext context) {
-    // Web端显示提示信息
-    if (kIsWeb) {
-      return Scaffold(
-        body: Stack(
-          children: [
-            Container(
-              color: Colors.grey[200],
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.map_outlined, size: 80, color: Colors.grey[400]),
-                    const SizedBox(height: 16),
-                    Text(
-                      '地图功能在Web端暂不可用',
-                      style: TextStyle(fontSize: 18, color: Colors.grey[600]),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '请使用Android或iOS App',
-                      style: TextStyle(fontSize: 14, color: Colors.grey[500]),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            Positioned(
-              top: MediaQuery.of(context).padding.top + 10,
-              left: 16,
-              right: 16,
-              child: _buildTopInfoBar(),
-            ),
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: _buildBottomActionBar(),
-            ),
-          ],
-        ),
-      );
-    }
+    // continue to build map UI for all platforms (web/iOS/Android)
 
     // 显示加载界面
     if (_isInitializing) {
@@ -398,69 +357,38 @@ class _HikingMapPageState extends State<HikingMapPage>
     return Scaffold(
       body: Stack(
         children: [
-          // 地图区域
+          // 地图区域（使用高德AMap）
           Positioned.fill(
-            child: FlutterMap(
-              mapController: _mapController,
-              options: MapOptions(
-                initialCenter: _position ?? _defaultPosition,
-                initialZoom: 15,
-                onMapReady: () {
-                  debugPrint('Map is ready');
+            child: Builder(builder: (context) {
+              final Set<Marker> _markers = <Marker>{};
+              final Set<Polyline> _polylines = <Polyline>{};
+              if (_position != null) {
+                _markers.add(Marker(position: _position!));
+              }
+              if (_pathPoints.isNotEmpty) {
+                _polylines.add(Polyline(points: _pathPoints, width: 6, color: const Color(0xFF2E7D32)));
+              }
+
+              return AMapWidget(
+                // 合规声明（必须设置，否则部分SDK版本会白屏）
+                privacyStatement: const AMapPrivacyStatement(hasContains: true, hasShow: true, hasAgree: true),
+                apiKey: const AMapApiKey(
+                  androidKey: '4bf8b27c0d66ef2fce72e133db777349',
+                  iosKey: '173b139f4b0710330132c496bf45ece1',
+                  webKey: '1f67dc45ef1c30121049a15d27edf12e',
+                ),
+                initialCameraPosition: CameraPosition(target: _position ?? _defaultPosition, zoom: 15),
+                markers: _markers,
+                polylines: _polylines,
+                onMapCreated: (AMapController controller) {
+                  debugPrint('AMap created');
                   setState(() {
+                    _amapController = controller;
                     _isMapReady = true;
                   });
                 },
-              ),
-              children: [
-                // 地图图层 - 使用OpenStreetMap
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.solitary.solitary',
-                ),
-                // 徒步轨迹线
-                if (_pathPoints.isNotEmpty)
-                  PolylineLayer(
-                    polylines: [
-                      Polyline(
-                        points: _pathPoints,
-                        color: const Color(0xFF2E7D32),
-                        strokeWidth: 4,
-                      ),
-                    ],
-                  ),
-                // 当前位置标记
-                if (_position != null)
-                  MarkerLayer(
-                    markers: [
-                      Marker(
-                        point: _position!,
-                        width: 40,
-                        height: 40,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF2E7D32),
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 3),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.3),
-                                blurRadius: 6,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: const Icon(
-                            Icons.person,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-              ],
-            ),
+              );
+            }),
           ),
 
           // 顶部信息栏

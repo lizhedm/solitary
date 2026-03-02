@@ -45,6 +45,10 @@ dependencies:
   permission_handler: ^12.0.1
   image_picker: ^1.2.1
   web: ^1.1.1
+  amap_flutter_map:
+    path: packages/amap_flutter_map
+  amap_flutter_base:
+    path: packages/amap_flutter_base
 
 dev_dependencies:
   flutter_test:
