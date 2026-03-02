@@ -5,6 +5,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:amap_flutter_map/amap_flutter_map.dart';
 import 'package:amap_flutter_base/amap_flutter_base.dart';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'sos_button.dart';
 import 'route_feedback_page.dart';
 import 'ask_question_page.dart';
@@ -46,6 +48,9 @@ class _HikingMapPageState extends State<HikingMapPage>
   // 轨迹相关变量
   final List<LatLng> _pathPoints = [];
   bool _isTrackingLocation = false;
+
+  // markers 状态，便于更新定位头像标记
+  Set<Marker> _markers = <Marker>{};
 
   // 位置更新流订阅
   StreamSubscription<Position>? _locationSubscription;
@@ -224,6 +229,22 @@ class _HikingMapPageState extends State<HikingMapPage>
       // 移动地图到当前位置
       _amapController?.moveCamera(CameraUpdate.newLatLngZoom(currentLatLng, 17));
 
+      // 生成头像标记并添加到地图上（使用首字母占位）
+      try {
+        const String initial = 'U';
+        final bytes = await _createAvatarMarkerBytes(initial, size: 128);
+        final descriptor = await BitmapDescriptor.fromBytes(bytes);
+        if (mounted) {
+          setState(() {
+            _markers = <Marker>{
+              Marker(position: currentLatLng, icon: descriptor, anchor: const Offset(0.5, 1.0)),
+            };
+          });
+        }
+      } catch (e) {
+        debugPrint('Create avatar marker failed: $e');
+      }
+
       if (mounted) {
         showDialog(
           context: context,
@@ -249,6 +270,42 @@ class _HikingMapPageState extends State<HikingMapPage>
         ).showSnackBar(SnackBar(content: Text('定位失败: $e')));
       }
     }
+  }
+
+  /// 生成头像 Marker 的 PNG bytes（圆形带文字首字母）
+  Future<Uint8List> _createAvatarMarkerBytes(String label, {int size = 128}) async {
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final double dSize = size.toDouble();
+
+    // 背景圆
+    final Paint bgPaint = Paint()..color = const ui.Color(0xFF2E7D32);
+    final Offset center = Offset(dSize / 2, dSize / 2);
+    canvas.drawCircle(center, dSize / 2, bgPaint);
+
+    // 白色内圈（边框效果）
+    final Paint borderPaint = Paint()..color = const ui.Color(0xFFFFFFFF);
+    canvas.drawCircle(center, dSize * 0.44, borderPaint);
+
+    // 文本（首字母）
+    final ui.ParagraphStyle paragraphStyle = ui.ParagraphStyle(
+      textAlign: ui.TextAlign.center,
+      fontWeight: ui.FontWeight.bold,
+    );
+    final ui.TextStyle textStyle = ui.TextStyle(
+      color: ui.Color(0xFF2E7D32),
+      fontSize: dSize * 0.45,
+    );
+    final ui.ParagraphBuilder pb = ui.ParagraphBuilder(paragraphStyle)..pushStyle(textStyle)..addText(label);
+    final ui.Paragraph paragraph = pb.build()..layout(ui.ParagraphConstraints(width: dSize));
+    // 将文本绘制到中心位置
+    final double textY = (dSize - paragraph.height) / 2;
+    canvas.drawParagraph(paragraph, Offset(0, textY));
+
+    final ui.Picture picture = recorder.endRecording();
+    final ui.Image img = await picture.toImage(size, size);
+    final ByteData? byteData = await img.toByteData(format: ui.ImageByteFormat.png);
+    return byteData!.buffer.asUint8List();
   }
 
   /// _startTimer - 开始计时
@@ -360,11 +417,7 @@ class _HikingMapPageState extends State<HikingMapPage>
           // 地图区域（使用高德AMap）
           Positioned.fill(
             child: Builder(builder: (context) {
-              final Set<Marker> _markers = <Marker>{};
               final Set<Polyline> _polylines = <Polyline>{};
-              if (_position != null) {
-                _markers.add(Marker(position: _position!));
-              }
               if (_pathPoints.isNotEmpty) {
                 _polylines.add(Polyline(points: _pathPoints, width: 6, color: const Color(0xFF2E7D32)));
               }
