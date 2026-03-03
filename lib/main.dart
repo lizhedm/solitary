@@ -51,7 +51,7 @@ class SolitaryApp extends StatelessWidget {
 }
 
 /// AuthWrapper - 认证包装组件
-/// 在应用启动时检查用户认证状态
+/// 在应用启动时检查用户认证状态，并根据认证状态显示不同页面
 class AuthWrapper extends StatefulWidget {
   const AuthWrapper({super.key});
 
@@ -71,8 +71,14 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
   @override
   Widget build(BuildContext context) {
-    // 直接显示主屏幕，用户可以作为访客使用应用
-    // 登录功能在需要时可用
-    return const MainScreen();
+    // 监听认证状态变化
+    final authProvider = Provider.of<AuthProvider>(context);
+
+    // 如果用户已认证，显示主屏幕；否则显示登录页面
+    if (authProvider.isAuthenticated) {
+      return const MainScreen();
+    } else {
+      return const LoginPage();
+    }
   }
 }

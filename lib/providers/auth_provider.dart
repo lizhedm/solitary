@@ -31,21 +31,41 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      // 1. 获取令牌 - 发送用户名密码到服务器
-      final formData = FormData.fromMap({
-        'username': username,
-        'password': password,
-      });
+      // 检查是否为测试账号
+      if (username == 'user' && password == '12345678') {
+        // 测试账号 - 模拟登录
+        _token = 'test_token_12345678';
+        _user = User(
+          id: 1,
+          username: 'user',
+          nickname: '测试用户',
+          email: 'user@example.com',
+          avatar: null,
+          isActive: true,
+        );
 
-      final response = await _apiService.post('/token', data: formData);
-      _token = response.data['access_token'];
+        // 保存token到本地存储
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('token', _token!);
 
-      // 保存token到本地存储
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('token', _token!);
+        notifyListeners();
+      } else {
+        // 1. 获取令牌 - 发送用户名密码到服务器
+        final formData = FormData.fromMap({
+          'username': username,
+          'password': password,
+        });
 
-      // 2. 获取用户信息
-      await fetchUserProfile();
+        final response = await _apiService.post('/token', data: formData);
+        _token = response.data['access_token'];
+
+        // 保存token到本地存储
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('token', _token!);
+
+        // 2. 获取用户信息
+        await fetchUserProfile();
+      }
     } catch (e) {
       print('Login error: $e');
       rethrow;

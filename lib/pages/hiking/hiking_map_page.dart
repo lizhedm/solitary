@@ -34,6 +34,8 @@ class _HikingMapPageState extends State<HikingMapPage>
 
   // 当前用户位置（使用LatLng格式）
   LatLng? _position;
+  // 起点位置标记
+  LatLng? _startMarkerPosition;
   // 徒步状态：IDLE（空闲）、RUNNING（进行中）、PAUSED（暂停）
   String _hikingState = 'IDLE';
   // 是否激活SOS模式
@@ -134,30 +136,9 @@ class _HikingMapPageState extends State<HikingMapPage>
         return;
       }
 
-      // 启动位置更新流
-      _locationSubscription =
-          Geolocator.getPositionStream(
-            locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.high,
-              distanceFilter: 5,
-            ),
-          ).listen(
-            (Position position) {
-              debugPrint(
-                'Location: ${position.latitude}, ${position.longitude}',
-              );
-              _updateLocation(position);
-            },
-            onError: (error) {
-              debugPrint('Location stream error: $error');
-            },
-          );
-
-      // 获取上次已知位置
-      final position = await Geolocator.getLastKnownPosition();
-      if (position != null && mounted) {
-        _updateLocation(position);
-      }
+      // 不再启动 Geolocator 位置更新流，依赖高德地图的定位回调
+      // 保留 _locationSubscription 为 null
+      debugPrint('Location service enabled, relying on AMap location updates');
     } catch (e) {
       debugPrint('Error initializing location: $e');
     }
@@ -169,6 +150,12 @@ class _HikingMapPageState extends State<HikingMapPage>
 
     final newLatLng = LatLng(newPos.latitude, newPos.longitude);
 
+    // 检查坐标有效性，忽略无效的0,0坐标
+    if (!_isValidCoordinate(newLatLng)) {
+      debugPrint('收到无效的定位坐标，忽略');
+      return;
+    }
+
     setState(() {
       _position = newLatLng;
       if (_hikingState == 'RUNNING') {
@@ -176,10 +163,8 @@ class _HikingMapPageState extends State<HikingMapPage>
       }
     });
 
-    // 徒步模式下移动相机跟随位置
-    if (_hikingState == 'RUNNING' && _position != null) {
-      _amapController?.moveCamera(CameraUpdate.newLatLngZoom(_position!, 17));
-    }
+    // 添加头像标记
+    _addAvatarMarker(newLatLng);
   }
 
   /// 检查坐标是否有效（不在0,0附近）
@@ -202,6 +187,10 @@ class _HikingMapPageState extends State<HikingMapPage>
     // 更新位置
     setState(() {
       _position = location.latLng;
+      // 如果在徒步模式，将位置添加到路径点
+      if (_hikingState == 'RUNNING') {
+        _pathPoints.add(location.latLng);
+      }
     });
     // 添加头像标记
     _addAvatarMarker(location.latLng);
@@ -214,23 +203,6 @@ class _HikingMapPageState extends State<HikingMapPage>
       setState(() {
         _centerOnNextLocation = false;
       });
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('定位成功'),
-            content: Text(
-              '当前位置: ${location.latLng.latitude.toStringAsFixed(4)}, ${location.latLng.longitude.toStringAsFixed(4)}',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('确定'),
-              ),
-            ],
-          ),
-        );
-      }
     }
   }
 
@@ -268,23 +240,6 @@ class _HikingMapPageState extends State<HikingMapPage>
       // 已经有有效位置，直接移动地图并添加头像标记
       _amapController?.moveCamera(CameraUpdate.newLatLngZoom(_position!, 17));
       _addAvatarMarker(_position!);
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('定位成功'),
-            content: Text(
-              '当前位置: ${_position!.latitude.toStringAsFixed(4)}, ${_position!.longitude.toStringAsFixed(4)}',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('确定'),
-              ),
-            ],
-          ),
-        );
-      }
       return;
     }
 
@@ -341,24 +296,6 @@ class _HikingMapPageState extends State<HikingMapPage>
         setState(() {
           _centerOnNextLocation = false;
         });
-      }
-
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('定位成功'),
-            content: Text(
-              '当前位置: ${latLng.latitude.toStringAsFixed(4)}, ${latLng.longitude.toStringAsFixed(4)}',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('确定'),
-              ),
-            ],
-          ),
-        );
       }
     } catch (e) {
       debugPrint('geolocator定位失败: $e');
@@ -418,22 +355,99 @@ class _HikingMapPageState extends State<HikingMapPage>
   Future<void> _addAvatarMarker(LatLng position) async {
     try {
       const String initial = 'U';
-      final bytes = await _createAvatarMarkerBytes(initial, size: 128);
-      final descriptor = await BitmapDescriptor.fromBytes(bytes);
+      final bytes = await _createAvatarMarkerBytes(initial, size: 64);
+      final descriptor = BitmapDescriptor.fromBytes(bytes);
       if (mounted) {
         setState(() {
-          _markers = <Marker>{
+          // 移除现有的头像标记（通过anchor识别）
+          _markers.removeWhere(
+            (marker) => marker.anchor == const Offset(0.5, 0.5),
+          );
+          // 添加新的头像标记
+          _markers.add(
             Marker(
               position: position,
               icon: descriptor,
-              anchor: const Offset(0.5, 1.0),
+              anchor: const Offset(0.5, 0.5),
+              zIndex: 100,
             ),
-          };
+          );
         });
       }
     } catch (e) {
       debugPrint('Create avatar marker failed: $e');
     }
+  }
+
+  /// 添加起点标记
+  Future<void> _addStartMarker(LatLng position) async {
+    try {
+      // 创建蓝色起点标记，中间有"S"表示起点
+      final bytes = await _createStartMarkerBytes('S', size: 32);
+      final descriptor = BitmapDescriptor.fromBytes(bytes);
+      if (mounted) {
+        setState(() {
+          // 移除可能已存在的起点标记（通过anchor识别）
+          _markers.removeWhere(
+            (marker) => marker.anchor == const Offset(0.5, 0.5),
+          );
+          _markers.add(
+            Marker(
+              position: position,
+              icon: descriptor,
+              anchor: const Offset(0.5, 0.5), // 中心对齐
+              zIndex: 50,
+            ),
+          );
+        });
+      }
+    } catch (e) {
+      debugPrint('Create start marker failed: $e');
+    }
+  }
+
+  /// 创建起点标记图标
+  Future<Uint8List> _createStartMarkerBytes(
+    String label, {
+    int size = 32,
+  }) async {
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final double dSize = size.toDouble();
+
+    // 背景圆 - 使用蓝色表示起点
+    final Paint bgPaint = Paint()..color = const ui.Color(0xFF2196F3);
+    final Offset center = Offset(dSize / 2, dSize / 2);
+    canvas.drawCircle(center, dSize / 2, bgPaint);
+
+    // 白色内圈（边框效果）
+    final Paint borderPaint = Paint()..color = const ui.Color(0xFFFFFFFF);
+    canvas.drawCircle(center, dSize * 0.44, borderPaint);
+
+    // 文本（S）
+    final ui.ParagraphStyle paragraphStyle = ui.ParagraphStyle(
+      textAlign: ui.TextAlign.center,
+      fontWeight: ui.FontWeight.bold,
+    );
+    final ui.TextStyle textStyle = ui.TextStyle(
+      color: ui.Color(0xFF2196F3),
+      fontSize: dSize * 0.45,
+    );
+    final ui.ParagraphBuilder pb = ui.ParagraphBuilder(paragraphStyle)
+      ..pushStyle(textStyle)
+      ..addText(label);
+    final ui.Paragraph paragraph = pb.build()
+      ..layout(ui.ParagraphConstraints(width: dSize));
+    // 将文本绘制到中心位置
+    final double textY = (dSize - paragraph.height) / 2;
+    canvas.drawParagraph(paragraph, Offset(0, textY));
+
+    final ui.Picture picture = recorder.endRecording();
+    final ui.Image img = await picture.toImage(size, size);
+    final ByteData? byteData = await img.toByteData(
+      format: ui.ImageByteFormat.png,
+    );
+    return byteData!.buffer.asUint8List();
   }
 
   /// _startTimer - 开始计时
@@ -473,6 +487,15 @@ class _HikingMapPageState extends State<HikingMapPage>
     _accumulatedDuration = Duration.zero;
     _currentDuration = Duration.zero;
     _pathPoints.clear();
+    // 清除起点标记
+    if (mounted) {
+      setState(() {
+        _markers.removeWhere(
+          (marker) => marker.anchor == const Offset(0.5, 0.5),
+        );
+        _startMarkerPosition = null;
+      });
+    }
   }
 
   /// _formatDuration - 格式化时长
@@ -551,7 +574,7 @@ class _HikingMapPageState extends State<HikingMapPage>
                   _polylines.add(
                     Polyline(
                       points: _pathPoints,
-                      width: 6,
+                      width: 3,
                       color: const Color(0xFF2E7D32),
                     ),
                   );
@@ -822,6 +845,11 @@ class _HikingMapPageState extends State<HikingMapPage>
               _pathPoints.add(_position!);
             }
           });
+          // 添加起点标记
+          if (_position != null) {
+            _addStartMarker(_position!);
+            _addAvatarMarker(_position!);
+          }
         },
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF2E7D32),

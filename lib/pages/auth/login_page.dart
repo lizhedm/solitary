@@ -22,6 +22,8 @@ class _LoginPageState extends State<LoginPage> {
   bool _isLoading = false;
   // 错误信息
   String? _errorMessage;
+  // 密码是否隐藏
+  bool _obscurePassword = true;
 
   @override
   void dispose() {
@@ -119,12 +121,25 @@ class _LoginPageState extends State<LoginPage> {
                 // 密码输入框
                 TextFormField(
                   controller: _passwordController,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: '密码',
-                    prefixIcon: Icon(Icons.lock),
-                    border: OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.lock),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                        color: Colors.grey,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscurePassword = !_obscurePassword;
+                        });
+                      },
+                    ),
+                    border: const OutlineInputBorder(),
                   ),
-                  obscureText: true, // 隐藏密码
+                  obscureText: _obscurePassword, // 隐藏密码
                   validator: (value) {
                     if (value == null || value.isEmpty) {
                       return '请输入密码';
