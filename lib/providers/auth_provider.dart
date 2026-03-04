@@ -16,6 +16,11 @@ class AuthProvider with ChangeNotifier {
   // API服务实例
   final ApiService _apiService = ApiService();
 
+  AuthProvider() {
+    // 根据平台更新API基础URL
+    _updateBaseUrlForPlatform();
+  }
+
   // 是否已认证（token不为空）
   bool get isAuthenticated => _token != null;
   // 获取当前用户
@@ -127,6 +132,128 @@ class AuthProvider with ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('token');
     notifyListeners();
+  }
+
+  /// updateUserProfile - 更新用户信息
+  /// 参数：nickname 昵称, email 邮箱, avatar 头像URL
+  /// 只更新提供的字段，其他字段保持不变
+  Future<void> updateUserProfile({
+    String? nickname,
+    String? email,
+    String? avatar,
+  }) async {
+    _isLoading = true;
+    notifyListeners();
+    try {
+      // 构建更新数据
+      final Map<String, dynamic> updateData = {};
+      if (nickname != null) updateData['nickname'] = nickname;
+      if (email != null) updateData['email'] = email;
+      if (avatar != null) updateData['avatar'] = avatar;
+
+      // 发送更新请求到服务器
+      await _apiService.post('/users/me/update', data: updateData);
+
+      // 更新本地用户信息
+      if (_user != null) {
+        _user = _user!.copyWith(
+          nickname: nickname ?? _user!.nickname,
+          email: email ?? _user!.email,
+          avatar: avatar ?? _user!.avatar,
+        );
+      }
+
+      notifyListeners();
+    } catch (e) {
+      print('Update profile error: $e');
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// updateUsername - 更新用户名
+  /// 注意：用户名可能需要在服务器端特殊处理，可能不能直接修改
+  Future<void> updateUsername(String username) async {
+    _isLoading = true;
+    notifyListeners();
+    try {
+      // 发送更新用户名请求到服务器
+      await _apiService.post('/users/me/update', data: {'username': username});
+
+      // 更新本地用户信息
+      if (_user != null) {
+        _user = _user!.copyWith(username: username);
+      }
+
+      notifyListeners();
+    } catch (e) {
+      print('Update username error: $e');
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// uploadAvatar - 上传头像文件
+  /// 参数：fileBytes 头像文件的字节数据, fileName 文件名
+  /// 返回：上传后的头像URL
+  Future<String?> uploadAvatar(List<int> fileBytes, String fileName) async {
+    _isLoading = true;
+    notifyListeners();
+    try {
+      // Ensure the user is authenticated before attempting upload
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      if (token == null || token.isEmpty) {
+        throw Exception('未登录，请先登录');
+      }
+      // 创建multipart/form-data
+      final formData = FormData.fromMap({
+        'avatar': MultipartFile.fromBytes(fileBytes, filename: fileName),
+      });
+
+      // 发送上传请求到服务器
+      final response = await _apiService.post(
+        '/users/me/avatar',
+        data: formData,
+      );
+
+      // 获取上传后的头像URL
+      final avatarUrl = response.data['avatar_url'] as String?;
+
+      // 更新本地用户信息
+      if (_user != null && avatarUrl != null) {
+        _user = _user!.copyWith(avatar: avatarUrl);
+        notifyListeners();
+      }
+
+      return avatarUrl;
+    } catch (e) {
+      print('Upload avatar error: $e');
+      rethrow;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// _updateBaseUrlForPlatform - 根据平台更新API基础URL
+  void _updateBaseUrlForPlatform() {
+    // Web端使用localhost
+    if (kIsWeb) {
+      _apiService.updateBaseUrl('http://localhost:8000');
+      return;
+    }
+
+    // 移动端平台检测
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      _apiService.updateBaseUrl('http://10.0.2.2:8000');
+    } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+      _apiService.updateBaseUrl('http://127.0.0.1:8000');
+    }
   }
 
   /// checkAuth - 检查认证状态

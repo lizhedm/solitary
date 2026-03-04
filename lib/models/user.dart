@@ -37,4 +37,37 @@ class User {
       isActive: json['is_active'] ?? true,
     );
   }
+
+  /// copyWith - 创建User的副本并更新指定字段
+  /// 用于更新用户信息时创建新的User实例
+  User copyWith({
+    int? id,
+    String? username,
+    String? email,
+    String? nickname,
+    String? avatar,
+    bool? isActive,
+  }) {
+    return User(
+      id: id ?? this.id,
+      username: username ?? this.username,
+      email: email ?? this.email,
+      nickname: nickname ?? this.nickname,
+      avatar: avatar ?? this.avatar,
+      isActive: isActive ?? this.isActive,
+    );
+  }
+
+  /// toJson - 将User实例转换为JSON数据
+  /// 用于发送用户信息到服务器
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'username': username,
+      'email': email,
+      'nickname': nickname,
+      'avatar': avatar,
+      'is_active': isActive,
+    };
+  }
 }

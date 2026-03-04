@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:io';
+import 'dart:typed_data';
+import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class RouteFeedbackPage extends StatefulWidget {
   const RouteFeedbackPage({super.key});
@@ -17,13 +19,48 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
   String _validity = '3600'; // seconds
 
   final List<Map<String, dynamic>> _feedbackTypes = [
-    {'id': 'blocked', 'icon': Icons.block, 'label': '道路阻断', 'color': Colors.red},
-    {'id': 'detour', 'icon': Icons.alt_route, 'label': '建议绕行', 'color': Colors.orange},
-    {'id': 'weather', 'icon': Icons.cloud, 'label': '天气变化', 'color': Colors.blue},
-    {'id': 'water', 'icon': Icons.water_drop, 'label': '水源位置', 'color': Colors.cyan},
-    {'id': 'campsite', 'icon': Icons.nights_stay, 'label': '推荐营地', 'color': Colors.green},
-    {'id': 'danger', 'icon': Icons.warning, 'label': '危险区域', 'color': Colors.deepOrange},
-    {'id': 'other', 'icon': Icons.more_horiz, 'label': '其他信息', 'color': Colors.grey},
+    {
+      'id': 'blocked',
+      'icon': Icons.block,
+      'label': '道路阻断',
+      'color': Colors.red,
+    },
+    {
+      'id': 'detour',
+      'icon': Icons.alt_route,
+      'label': '建议绕行',
+      'color': Colors.orange,
+    },
+    {
+      'id': 'weather',
+      'icon': Icons.cloud,
+      'label': '天气变化',
+      'color': Colors.blue,
+    },
+    {
+      'id': 'water',
+      'icon': Icons.water_drop,
+      'label': '水源位置',
+      'color': Colors.cyan,
+    },
+    {
+      'id': 'campsite',
+      'icon': Icons.nights_stay,
+      'label': '推荐营地',
+      'color': Colors.green,
+    },
+    {
+      'id': 'danger',
+      'icon': Icons.warning,
+      'label': '危险区域',
+      'color': Colors.deepOrange,
+    },
+    {
+      'id': 'other',
+      'icon': Icons.more_horiz,
+      'label': '其他信息',
+      'color': Colors.grey,
+    },
   ];
 
   Future<void> _takePhoto() async {
@@ -34,6 +71,27 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
         _photos.add(photo);
       });
     }
+  }
+
+  // Build a widget to display a photo in a web-friendly way (no dart:io).
+  Widget _photoWidget(XFile photo) {
+    // readAsBytes is supported on web and mobile for XFile
+    return FutureBuilder<Uint8List>(
+      future: photo.readAsBytes(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.done &&
+            snapshot.hasData) {
+          return Image.memory(
+            snapshot.data!,
+            width: 100,
+            height: 100,
+            fit: BoxFit.cover,
+          );
+        }
+        // placeholder while loading
+        return Container(width: 100, height: 100, color: Colors.grey.shade200);
+      },
+    );
   }
 
   @override
@@ -69,7 +127,10 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
                 const SizedBox(height: 24),
 
                 // Feedback Type
-                const Text('路况类型', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const Text(
+                  '路况类型',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 12),
                 Wrap(
                   spacing: 12,
@@ -78,7 +139,11 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
                     final isSelected = _selectedType == type['id'];
                     return FilterChip(
                       label: Text(type['label']),
-                      avatar: Icon(type['icon'], size: 18, color: isSelected ? Colors.white : type['color']),
+                      avatar: Icon(
+                        type['icon'],
+                        size: 18,
+                        color: isSelected ? Colors.white : type['color'],
+                      ),
                       selected: isSelected,
                       onSelected: (selected) {
                         setState(() {
@@ -86,7 +151,9 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
                         });
                       },
                       selectedColor: type['color'],
-                      labelStyle: TextStyle(color: isSelected ? Colors.white : Colors.black),
+                      labelStyle: TextStyle(
+                        color: isSelected ? Colors.white : Colors.black,
+                      ),
                       backgroundColor: Colors.white,
                       side: BorderSide(color: type['color']),
                       checkmarkColor: Colors.white,
@@ -96,7 +163,10 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
                 const SizedBox(height: 24),
 
                 // Description
-                const Text('详细描述', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const Text(
+                  '详细描述',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _descriptionController,
@@ -110,7 +180,10 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
                 const SizedBox(height: 24),
 
                 // Photos
-                const Text('照片证据（可选）', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const Text(
+                  '照片证据（可选）',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 12),
                 SizedBox(
                   height: 100,
@@ -134,7 +207,13 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 Icon(Icons.camera_alt, color: Colors.grey),
-                                Text('添加照片', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                                Text(
+                                  '添加照片',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -144,22 +223,22 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
                         children: [
                           ClipRRect(
                             borderRadius: BorderRadius.circular(8),
-                            child: Image.file(
-                              File(_photos[index].path),
-                              width: 100,
-                              height: 100,
-                              fit: BoxFit.cover,
-                            ),
+                            child: _photoWidget(_photos[index]),
                           ),
                           Positioned(
                             top: 4,
                             right: 4,
                             child: GestureDetector(
-                              onTap: () => setState(() => _photos.removeAt(index)),
+                              onTap: () =>
+                                  setState(() => _photos.removeAt(index)),
                               child: const CircleAvatar(
                                 radius: 10,
                                 backgroundColor: Colors.black54,
-                                child: Icon(Icons.close, size: 14, color: Colors.white),
+                                child: Icon(
+                                  Icons.close,
+                                  size: 14,
+                                  color: Colors.white,
+                                ),
                               ),
                             ),
                           ),
@@ -171,30 +250,40 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
                 const SizedBox(height: 24),
 
                 // Validity
-                const Text('有效期', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const Text(
+                  '有效期',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   value: _validity,
-                  decoration: const InputDecoration(border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                  ),
                   items: const [
                     DropdownMenuItem(value: '3600', child: Text('1小时')),
                     DropdownMenuItem(value: '10800', child: Text('3小时')),
                     DropdownMenuItem(value: 'endOfDay', child: Text('今天')),
-                    DropdownMenuItem(value: 'permanent', child: Text('永久 (如道路损毁)')),
+                    DropdownMenuItem(
+                      value: 'permanent',
+                      child: Text('永久 (如道路损毁)'),
+                    ),
                   ],
                   onChanged: (value) => setState(() => _validity = value!),
                 ),
               ],
             ),
           ),
-          
+
           // Submit Button
           Container(
             padding: const EdgeInsets.all(16),
             child: SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: (_selectedType == null || _descriptionController.text.isEmpty)
+                onPressed:
+                    (_selectedType == null ||
+                        _descriptionController.text.isEmpty)
                     ? null
                     : () {
                         ScaffoldMessenger.of(context).showSnackBar(

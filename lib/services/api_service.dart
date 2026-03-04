@@ -4,23 +4,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// ApiService - API服务类
 /// 封装Dio HTTP客户端，用于与后端服务器通信
 class ApiService {
-  // 基础URL获取方法
-  // Android模拟器使用10.0.2.2访问主机localhost
-  // iOS模拟器使用127.0.0.1访问主机localhost
-  // Web端使用localhost
-  static String get baseUrl {
-    // 简单检查，实际项目中应使用环境配置
-    // Android模拟器使用10.0.2.2
-    return 'http://10.0.2.2:8000';
-    // iOS模拟器或Web端使用 http://127.0.0.1:8000
-  }
-
   // Dio HTTP客户端实例
   final Dio _dio = Dio(
     BaseOptions(
-      baseUrl: 'http://127.0.0.1:8000', // 默认为localhost，用于iOS/Web。Android需要特殊处理
-      connectTimeout: const Duration(seconds: 5), // 连接超时时间5秒
-      receiveTimeout: const Duration(seconds: 3), // 接收超时时间3秒
+      baseUrl: 'http://localhost:8000', // 默认localhost，运行时可通过updateBaseUrl更新
+      connectTimeout: const Duration(seconds: 10), // 连接超时时间10秒
+      receiveTimeout: const Duration(seconds: 10), // 接收超时时间10秒
     ),
   );
 

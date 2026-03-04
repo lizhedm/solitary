@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class SOSDetailPage extends StatefulWidget {
   const SOSDetailPage({super.key});
@@ -18,12 +19,42 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
   final ImagePicker _picker = ImagePicker();
 
   final List<Map<String, dynamic>> _dangerTypes = [
-    {'id': 'injury', 'icon': Icons.local_hospital, 'label': '人员受伤', 'color': Colors.red},
-    {'id': 'lost', 'icon': Icons.explore_off, 'label': '迷路失联', 'color': Colors.orange},
-    {'id': 'weather', 'icon': Icons.thunderstorm, 'label': '天气突变', 'color': Colors.blueGrey},
-    {'id': 'animal', 'icon': Icons.pets, 'label': '野生动物', 'color': Colors.brown},
-    {'id': 'equipment', 'icon': Icons.backpack, 'label': '装备故障', 'color': Colors.grey},
-    {'id': 'other', 'icon': Icons.warning, 'label': '其他危险', 'color': Colors.black},
+    {
+      'id': 'injury',
+      'icon': Icons.local_hospital,
+      'label': '人员受伤',
+      'color': Colors.red,
+    },
+    {
+      'id': 'lost',
+      'icon': Icons.explore_off,
+      'label': '迷路失联',
+      'color': Colors.orange,
+    },
+    {
+      'id': 'weather',
+      'icon': Icons.thunderstorm,
+      'label': '天气突变',
+      'color': Colors.blueGrey,
+    },
+    {
+      'id': 'animal',
+      'icon': Icons.pets,
+      'label': '野生动物',
+      'color': Colors.brown,
+    },
+    {
+      'id': 'equipment',
+      'icon': Icons.backpack,
+      'label': '装备故障',
+      'color': Colors.grey,
+    },
+    {
+      'id': 'other',
+      'icon': Icons.warning,
+      'label': '其他危险',
+      'color': Colors.black,
+    },
   ];
 
   final List<Map<String, dynamic>> _urgentItems = [
@@ -43,6 +74,25 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
         _photos.add(photo);
       });
     }
+  }
+
+  // Build a web-friendly photo widget without using dart:io
+  Widget _photoWidget(XFile photo) {
+    return FutureBuilder<Uint8List>(
+      future: photo.readAsBytes(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.done &&
+            snapshot.hasData) {
+          return Image.memory(
+            snapshot.data!,
+            width: 100,
+            height: 100,
+            fit: BoxFit.cover,
+          );
+        }
+        return Container(width: 100, height: 100, color: Colors.grey.shade200);
+      },
+    );
   }
 
   @override
@@ -75,7 +125,10 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
                       Expanded(
                         child: Text(
                           '求救信号已发送给周围 3 位用户',
-                          style: TextStyle(color: Colors.red.shade900, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                            color: Colors.red.shade900,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                     ],
@@ -84,7 +137,10 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
                 const SizedBox(height: 24),
 
                 // Danger Type
-                const Text('危险类型（必选）', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const Text(
+                  '危险类型（必选）',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 12),
                 GridView.builder(
                   shrinkWrap: true,
@@ -100,26 +156,39 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
                     final type = _dangerTypes[index];
                     final isSelected = _selectedDangerType == type['id'];
                     return GestureDetector(
-                      onTap: () => setState(() => _selectedDangerType = type['id']),
+                      onTap: () =>
+                          setState(() => _selectedDangerType = type['id']),
                       child: Container(
                         decoration: BoxDecoration(
-                          color: isSelected ? type['color'].withOpacity(0.1) : Colors.grey.shade50,
+                          color: isSelected
+                              ? type['color'].withOpacity(0.1)
+                              : Colors.grey.shade50,
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                            color: isSelected ? type['color'] : Colors.grey.shade300,
+                            color: isSelected
+                                ? type['color']
+                                : Colors.grey.shade300,
                             width: 2,
                           ),
                         ),
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(type['icon'], color: isSelected ? type['color'] : Colors.grey, size: 32),
+                            Icon(
+                              type['icon'],
+                              color: isSelected ? type['color'] : Colors.grey,
+                              size: 32,
+                            ),
                             const SizedBox(height: 8),
                             Text(
                               type['label'],
                               style: TextStyle(
-                                color: isSelected ? type['color'] : Colors.grey.shade700,
-                                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                color: isSelected
+                                    ? type['color']
+                                    : Colors.grey.shade700,
+                                fontWeight: isSelected
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
                                 fontSize: 12,
                               ),
                             ),
@@ -132,7 +201,10 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
                 const SizedBox(height: 24),
 
                 // Safety Status
-                const Text('当前安全状态', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const Text(
+                  '当前安全状态',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 12),
                 Container(
                   decoration: BoxDecoration(
@@ -150,7 +222,10 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
                 const SizedBox(height: 24),
 
                 // Urgent Items
-                const Text('急需物品/帮助（多选）', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const Text(
+                  '急需物品/帮助（多选）',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 12),
                 Wrap(
                   spacing: 12,
@@ -159,7 +234,11 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
                     final isSelected = _selectedItems.contains(item['id']);
                     return FilterChip(
                       label: Text(item['label']),
-                      avatar: Icon(item['icon'], size: 18, color: isSelected ? Colors.white : Colors.grey),
+                      avatar: Icon(
+                        item['icon'],
+                        size: 18,
+                        color: isSelected ? Colors.white : Colors.grey,
+                      ),
                       selected: isSelected,
                       onSelected: (selected) {
                         setState(() {
@@ -171,7 +250,9 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
                         });
                       },
                       selectedColor: const Color(0xFF2E7D32),
-                      labelStyle: TextStyle(color: isSelected ? Colors.white : Colors.black),
+                      labelStyle: TextStyle(
+                        color: isSelected ? Colors.white : Colors.black,
+                      ),
                       checkmarkColor: Colors.white,
                     );
                   }).toList(),
@@ -179,7 +260,10 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
                 const SizedBox(height: 24),
 
                 // Description
-                const Text('具体描述', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const Text(
+                  '具体描述',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _descriptionController,
@@ -193,7 +277,10 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
                 const SizedBox(height: 24),
 
                 // Photos
-                const Text('现场照片（可选，最多3张）', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const Text(
+                  '现场照片（可选，最多3张）',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 12),
                 SizedBox(
                   height: 100,
@@ -211,13 +298,22 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
                             decoration: BoxDecoration(
                               color: Colors.grey.shade100,
                               borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.grey.shade300, style: BorderStyle.solid),
+                              border: Border.all(
+                                color: Colors.grey.shade300,
+                                style: BorderStyle.solid,
+                              ),
                             ),
                             child: const Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 Icon(Icons.camera_alt, color: Colors.grey),
-                                Text('添加照片', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                                Text(
+                                  '添加照片',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -227,22 +323,22 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
                         children: [
                           ClipRRect(
                             borderRadius: BorderRadius.circular(8),
-                            child: Image.file(
-                              File(_photos[index].path),
-                              width: 100,
-                              height: 100,
-                              fit: BoxFit.cover,
-                            ),
+                            child: _photoWidget(_photos[index]),
                           ),
                           Positioned(
                             top: 4,
                             right: 4,
                             child: GestureDetector(
-                              onTap: () => setState(() => _photos.removeAt(index)),
+                              onTap: () =>
+                                  setState(() => _photos.removeAt(index)),
                               child: const CircleAvatar(
                                 radius: 10,
                                 backgroundColor: Colors.black54,
-                                child: Icon(Icons.close, size: 14, color: Colors.white),
+                                child: Icon(
+                                  Icons.close,
+                                  size: 14,
+                                  color: Colors.white,
+                                ),
                               ),
                             ),
                           ),
@@ -254,7 +350,7 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
               ],
             ),
           ),
-          
+
           // Bottom Actions
           Container(
             padding: const EdgeInsets.all(16),

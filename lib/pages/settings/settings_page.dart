@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../hiking/hiking_history_page.dart';
@@ -13,14 +14,152 @@ import 'about_us_page.dart';
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
 
+  Future<void> _pickImageForAvatar(BuildContext context) async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final picker = ImagePicker();
+
+    // 显示选择来源的对话框
+    final source = await showDialog<ImageSource>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('选择图片'),
+        content: const Text('请选择图片来源'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, ImageSource.gallery),
+            child: const Text('相册'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, ImageSource.camera),
+            child: const Text('相机'),
+          ),
+        ],
+      ),
+    );
+
+    if (source == null) return;
+
+    try {
+      final pickedFile = await picker.pickImage(source: source);
+      if (pickedFile != null) {
+        final fileBytes = await pickedFile.readAsBytes();
+        final fileName = pickedFile.name;
+
+        // 显示加载指示器
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const AlertDialog(
+            content: Row(
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(width: 16),
+                Text('上传中...'),
+              ],
+            ),
+          ),
+        );
+
+        try {
+          await authProvider.uploadAvatar(fileBytes, fileName);
+          Navigator.pop(context); // 关闭加载对话框
+        } catch (e) {
+          Navigator.pop(context); // 关闭加载对话框
+          _showErrorDialog(context, '上传失败: $e');
+        }
+      }
+    } catch (e) {
+      _showErrorDialog(context, '选择图片失败: $e');
+    }
+  }
+
+  Future<void> _showEditUsernameDialog(BuildContext context) async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final currentUser = authProvider.user;
+    final controller = TextEditingController(text: currentUser?.nickname ?? '');
+
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('修改用户名'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: '用户名',
+            hintText: '请输入新的用户名',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final newUsername = controller.text.trim();
+              if (newUsername.isEmpty) {
+                _showErrorDialog(context, '用户名不能为空');
+                return;
+              }
+
+              if (newUsername == currentUser?.nickname) {
+                Navigator.pop(context);
+                return;
+              }
+
+              // 显示加载指示器
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) => const AlertDialog(
+                  content: Row(
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(width: 16),
+                      Text('更新中...'),
+                    ],
+                  ),
+                ),
+              );
+
+              try {
+                await authProvider.updateUserProfile(nickname: newUsername);
+                Navigator.pop(context); // 关闭加载对话框
+                Navigator.pop(context); // 关闭编辑对话框
+              } catch (e) {
+                Navigator.pop(context); // 关闭加载对话框
+                _showErrorDialog(context, '更新失败: $e');
+              }
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showErrorDialog(BuildContext context, String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('错误'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = Provider.of<AuthProvider>(context).user;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('设置'),
-      ),
+      appBar: AppBar(title: const Text('设置')),
       body: ListView(
         children: [
           // User Profile Card
@@ -29,30 +168,71 @@ class SettingsPage extends StatelessWidget {
             color: Colors.white,
             child: Row(
               children: [
-                CircleAvatar(
-                  radius: 32,
-                  backgroundColor: const Color(0xFF2E7D32),
-                  child: Text(
-                    user?.nickname?.substring(0, 1).toUpperCase() ?? 'U',
-                    style: const TextStyle(fontSize: 24, color: Colors.white),
-                  ),
+                // 头像 - 可点击上传
+                GestureDetector(
+                  onTap: () => _pickImageForAvatar(context),
+                  child: (user?.avatar?.isNotEmpty ?? false)
+                      ? CircleAvatar(
+                          radius: 32,
+                          backgroundImage: NetworkImage(user!.avatar!),
+                          backgroundColor: const Color(0xFF2E7D32),
+                        )
+                      : CircleAvatar(
+                          radius: 32,
+                          backgroundColor: const Color(0xFF2E7D32),
+                          child: Text(
+                            user?.nickname?.substring(0, 1).toUpperCase() ??
+                                'U',
+                            style: const TextStyle(
+                              fontSize: 24,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
                 ),
                 const SizedBox(width: 16),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      user?.nickname ?? '用户',
-                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                    ),
-                    Text(
-                      user?.username ?? '',
-                      style: const TextStyle(color: Colors.grey),
-                    ),
-                  ],
+                // 用户信息 - 可点击修改用户名
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      GestureDetector(
+                        onTap: () => _showEditUsernameDialog(context),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                user?.nickname ?? '用户',
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            const Icon(
+                              Icons.edit,
+                              size: 16,
+                              color: Colors.grey,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        user?.username ?? '',
+                        style: const TextStyle(color: Colors.grey),
+                      ),
+                      if (user?.id != null)
+                        Text(
+                          'ID: ${user!.id}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
-                const Spacer(),
-                const Icon(Icons.chevron_right, color: Colors.grey),
               ],
             ),
           ),
@@ -67,7 +247,9 @@ class SettingsPage extends StatelessWidget {
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const PrivacySettingsPage()),
+                MaterialPageRoute(
+                  builder: (context) => const PrivacySettingsPage(),
+                ),
               );
             },
           ),
@@ -78,7 +260,9 @@ class SettingsPage extends StatelessWidget {
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const AccountSecurityPage()),
+                MaterialPageRoute(
+                  builder: (context) => const AccountSecurityPage(),
+                ),
               );
             },
           ),
@@ -92,7 +276,9 @@ class SettingsPage extends StatelessWidget {
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const HikingHistoryPage()),
+                MaterialPageRoute(
+                  builder: (context) => const HikingHistoryPage(),
+                ),
               );
             },
           ),
@@ -104,7 +290,9 @@ class SettingsPage extends StatelessWidget {
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const LanguageSettingsPage()),
+                MaterialPageRoute(
+                  builder: (context) => const LanguageSettingsPage(),
+                ),
               );
             },
           ),
@@ -115,7 +303,9 @@ class SettingsPage extends StatelessWidget {
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const MapSettingsPage()),
+                MaterialPageRoute(
+                  builder: (context) => const MapSettingsPage(),
+                ),
               );
             },
           ),
@@ -126,7 +316,9 @@ class SettingsPage extends StatelessWidget {
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const NotificationSettingsPage()),
+                MaterialPageRoute(
+                  builder: (context) => const NotificationSettingsPage(),
+                ),
               );
             },
           ),
@@ -212,7 +404,10 @@ class SettingsPage extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (value != null)
-            Text(value, style: const TextStyle(color: Colors.grey, fontSize: 14)),
+            Text(
+              value,
+              style: const TextStyle(color: Colors.grey, fontSize: 14),
+            ),
           const Icon(Icons.chevron_right, color: Colors.grey, size: 20),
         ],
       ),
