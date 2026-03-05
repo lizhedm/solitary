@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/auth_provider.dart';
 import '../hiking/hiking_history_page.dart';
 import 'privacy_settings_page.dart';
@@ -11,8 +12,25 @@ import 'notification_settings_page.dart';
 import 'user_guide_page.dart';
 import 'about_us_page.dart';
 
-class SettingsPage extends StatelessWidget {
-  const SettingsPage({super.key});
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({Key? key}) : super(key: key);
+
+  @override
+  _SettingsPageState createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  @override
+  void initState() {
+    super.initState();
+    // 尝试在进入设置页时刷新用户信息，以展示最新数据
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final auth = Provider.of<AuthProvider>(context, listen: false);
+      if (auth.user == null) {
+        auth.fetchUserProfile();
+      }
+    });
+  }
 
   Future<void> _pickImageForAvatar(BuildContext context) async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
@@ -138,6 +156,50 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
+  Future<void> _showServerUrlDialog(BuildContext context) async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    String currentUrl = '';
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      currentUrl = prefs.getString('server_base_url') ?? '';
+    } catch (e) {
+      // ignore
+    }
+
+    final controller = TextEditingController(text: currentUrl);
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('设置服务器地址'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: '服务器地址',
+            hintText: '如 http://192.168.1.100:8000',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final url = controller.text.trim();
+              if (url.isEmpty) {
+                Navigator.pop(context);
+                return;
+              }
+              await authProvider.setServerBaseUrl(url);
+              Navigator.pop(context);
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showErrorDialog(BuildContext context, String message) {
     showDialog(
       context: context,
@@ -152,6 +214,11 @@ class SettingsPage extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _refreshUserProfile() async {
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    await auth.fetchUserProfile();
   }
 
   @override
@@ -191,7 +258,7 @@ class SettingsPage extends StatelessWidget {
                         ),
                 ),
                 const SizedBox(width: 16),
-                // 用户信息 - 可点击修改用户名
+                // 用户信息 - 显示用户名和提供编辑/刷新
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -208,6 +275,19 @@ class SettingsPage extends StatelessWidget {
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
+                            ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.refresh,
+                                size: 16,
+                                color: Colors.grey,
+                              ),
+                              onPressed: () async {
+                                await _refreshUserProfile();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('已刷新用户信息')),
+                                );
+                              },
                             ),
                             const Icon(
                               Icons.edit,
@@ -266,7 +346,6 @@ class SettingsPage extends StatelessWidget {
               );
             },
           ),
-
           const SizedBox(height: 16),
           _buildSectionHeader('偏好设置'),
           _buildSettingsTile(
@@ -281,6 +360,12 @@ class SettingsPage extends StatelessWidget {
                 ),
               );
             },
+          ),
+          _buildSettingsTile(
+            icon: Icons.link,
+            title: '服务器地址',
+            color: Colors.blue,
+            onTap: () => _showServerUrlDialog(context),
           ),
           _buildSettingsTile(
             icon: Icons.language,
@@ -322,7 +407,6 @@ class SettingsPage extends StatelessWidget {
               );
             },
           ),
-
           const SizedBox(height: 16),
           _buildSectionHeader('关于'),
           _buildSettingsTile(
@@ -347,7 +431,6 @@ class SettingsPage extends StatelessWidget {
               );
             },
           ),
-
           const SizedBox(height: 32),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),

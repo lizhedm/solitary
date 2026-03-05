@@ -1,5 +1,5 @@
-import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import '../models/user.dart';
 import '../services/api_service.dart';
@@ -17,8 +17,7 @@ class AuthProvider with ChangeNotifier {
   final ApiService _apiService = ApiService();
 
   AuthProvider() {
-    // 根据平台更新API基础URL
-    _updateBaseUrlForPlatform();
+    // 已移除按平台自动覆盖基础URL的逻辑，统一使用云端地址
   }
 
   // 是否已认证（token不为空）
@@ -36,41 +35,29 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      // 检查是否为测试账号
-      if (username == 'user' && password == '12345678') {
-        // 测试账号 - 模拟登录
-        _token = 'test_token_12345678';
-        _user = User(
-          id: 1,
-          username: 'user',
-          nickname: '测试用户',
-          email: 'user@example.com',
-          avatar: null,
-          isActive: true,
-        );
-
-        // 保存token到本地存储
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('token', _token!);
-
-        notifyListeners();
-      } else {
-        // 1. 获取令牌 - 发送用户名密码到服务器
-        final formData = FormData.fromMap({
-          'username': username,
-          'password': password,
-        });
-
-        final response = await _apiService.post('/token', data: formData);
-        _token = response.data['access_token'];
-
-        // 保存token到本地存储
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('token', _token!);
-
-        // 2. 获取用户信息
-        await fetchUserProfile();
+      // 统一使用真实账号进行登录；移除自动化测试账号逻辑
+      // 1. 获取令牌 - 发送用户名密码到服务器
+      final response = await _apiService.post(
+        '/token',
+        data: {'username': username, 'password': password},
+        options: Options(contentType: 'application/x-www-form-urlencoded'),
+      );
+      // 兼容后端返回的不同字段名，优先使用 access_token，其次 token 等
+      final tokenFromResponse =
+          response.data['access_token'] ??
+          response.data['token'] ??
+          response.data['jwt'];
+      if (tokenFromResponse == null) {
+        throw Exception('后端未返回 token，请检查接口实现');
       }
+      _token = tokenFromResponse.toString();
+
+      // 保存token到本地存储
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('token', _token!);
+
+      // 2. 获取用户信息
+      await fetchUserProfile();
     } catch (e) {
       print('Login error: $e');
       rethrow;
@@ -197,6 +184,16 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
+  /// setServerBaseUrl - 设定服务器基地址（Android/iOS移动端特定环境下的后端地址）
+  /// 便于在局域网环境下移动端直接访问本地开发服务器
+  Future<void> setServerBaseUrl(String url) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('server_base_url', url);
+    // 直接切换 Dio 客户端的基础URL
+    _apiService.updateBaseUrl(url);
+    notifyListeners();
+  }
+
   /// uploadAvatar - 上传头像文件
   /// 参数：fileBytes 头像文件的字节数据, fileName 文件名
   /// 返回：上传后的头像URL
@@ -240,21 +237,7 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
-  /// _updateBaseUrlForPlatform - 根据平台更新API基础URL
-  void _updateBaseUrlForPlatform() {
-    // Web端使用localhost
-    if (kIsWeb) {
-      _apiService.updateBaseUrl('http://localhost:8000');
-      return;
-    }
-
-    // 移动端平台检测
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      _apiService.updateBaseUrl('http://10.0.2.2:8000');
-    } else if (defaultTargetPlatform == TargetPlatform.iOS) {
-      _apiService.updateBaseUrl('http://127.0.0.1:8000');
-    }
-  }
+  // 删除按平台自动覆盖基础URL 的实现，保持统一云端地址
 
   /// checkAuth - 检查认证状态
   /// 应用启动时调用，检查本地存储的token是否有效

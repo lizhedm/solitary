@@ -125,9 +125,16 @@ flutter run -d emulator-5554
 ```
 
 ```bash
-# 清除flutter run
-$ pkill -f "flutter run" 2>/dev/null; sleep 2
+# 关闭安卓模拟器
+adb -s emulator-5554 emu kill
 ```
+
+```bash
+# 转发真机的端口到mac电脑的端口
+adb -s c4c25686 reverse tcp:8000 tcp:8000 
+```
+
+
 
 
 

@@ -3,11 +3,35 @@ import 'package:provider/provider.dart';
 import 'providers/auth_provider.dart';
 import 'pages/auth/login_page.dart';
 import 'main_screen.dart';
+import 'package:solitary/services/api_service.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:async';
 
 /// 应用程序入口函数
 /// 启动整个Flutter应用
-void main() {
-  runApp(const SolitaryApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // 统一的云端后端地址
+  final String baseUrl = 'http://114.55.148.245:8000';
+
+  // 应用启动时设置全局 API 基地址
+  ApiService().updateBaseUrl(baseUrl);
+
+  // 全局错误兜底
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.dumpErrorToConsole(details);
+  };
+
+  runZonedGuarded(
+    () {
+      runApp(const SolitaryApp());
+    },
+    (error, stack) {
+      print('Uncaught Flutter error: $error');
+      print(stack);
+    },
+  );
 }
 
 /// SolitaryApp - 应用程序根全局组件

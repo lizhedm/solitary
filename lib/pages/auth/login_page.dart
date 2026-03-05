@@ -64,6 +64,20 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  /// Show registration sheet to register a new account
+  Future<void> _showRegistrationSheet() async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: SizedBox(height: 520, child: RegistrationForm()),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -160,6 +174,20 @@ class _LoginPageState extends State<LoginPage> {
                       ? const CircularProgressIndicator(color: Colors.white)
                       : const Text('登录', style: TextStyle(fontSize: 18)),
                 ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text('没有账号？'),
+                    TextButton(
+                      onPressed: _showRegistrationSheet,
+                      child: const Text(
+                        '注册',
+                        style: TextStyle(color: Color(0xFF2E7D32)),
+                      ),
+                    ),
+                  ],
+                ),
                 // 错误信息显示
                 if (_errorMessage != null) ...[
                   const SizedBox(height: 16),
@@ -171,6 +199,158 @@ class _LoginPageState extends State<LoginPage> {
                 ],
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Registration form widget displayed in a bottom sheet
+class RegistrationForm extends StatefulWidget {
+  const RegistrationForm({Key? key}) : super(key: key);
+
+  @override
+  _RegistrationFormState createState() => _RegistrationFormState();
+}
+
+class _RegistrationFormState extends State<RegistrationForm> {
+  final _formKey = GlobalKey<FormState>();
+  final _regUsernameController = TextEditingController();
+  final _regPasswordController = TextEditingController();
+  final _regEmailController = TextEditingController();
+  final _regNicknameController = TextEditingController();
+  bool _loading = false;
+  String? _errorMessage;
+
+  @override
+  void dispose() {
+    _regUsernameController.dispose();
+    _regPasswordController.dispose();
+    _regEmailController.dispose();
+    _regNicknameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _register() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() {
+      _loading = true;
+      _errorMessage = null;
+    });
+    final username = _regUsernameController.text.trim();
+    final password = _regPasswordController.text;
+    final email = _regEmailController.text.trim().isEmpty
+        ? null
+        : _regEmailController.text.trim();
+    final nickname = _regNicknameController.text.trim().isEmpty
+        ? null
+        : _regNicknameController.text.trim();
+
+    try {
+      final auth = Provider.of<AuthProvider>(context, listen: false);
+      await auth.register(username, password, email: email, nickname: nickname);
+      // 尝试自动登录
+      await auth.login(username, password);
+      if (mounted) {
+        Navigator.of(context).pop(); // 关闭注册弹窗
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('注册成功，已登录')));
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = '注册失败：$e';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.only(bottom: 8.0),
+                  child: Text(
+                    '注册新账户',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+              TextFormField(
+                controller: _regUsernameController,
+                decoration: const InputDecoration(
+                  labelText: '用户名',
+                  prefixIcon: Icon(Icons.person),
+                ),
+                validator: (v) => (v == null || v.isEmpty) ? '请输入用户名' : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _regPasswordController,
+                decoration: const InputDecoration(
+                  labelText: '密码',
+                  prefixIcon: Icon(Icons.lock),
+                ),
+                obscureText: true,
+                validator: (v) => (v == null || v.isEmpty) ? '请输入密码' : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _regEmailController,
+                decoration: const InputDecoration(
+                  labelText: '邮箱（可选）',
+                  prefixIcon: Icon(Icons.email),
+                ),
+                keyboardType: TextInputType.emailAddress,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _regNicknameController,
+                decoration: const InputDecoration(
+                  labelText: '昵称（可选）',
+                  prefixIcon: Icon(Icons.face),
+                ),
+              ),
+              if (_errorMessage != null) ...[
+                const SizedBox(height: 8),
+                Text(_errorMessage!, style: const TextStyle(color: Colors.red)),
+              ],
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _loading ? null : _register,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF2E7D32),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                child: _loading
+                    ? const CircularProgressIndicator(color: Colors.white)
+                    : const Text('注册', style: TextStyle(fontSize: 16)),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('取消'),
+                ),
+              ),
+            ],
           ),
         ),
       ),
