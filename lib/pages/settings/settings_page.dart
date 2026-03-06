@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/auth_provider.dart';
 import '../hiking/hiking_history_page.dart';
 import 'privacy_settings_page.dart';
@@ -60,8 +61,59 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final pickedFile = await picker.pickImage(source: source);
       if (pickedFile != null) {
-        final fileBytes = await pickedFile.readAsBytes();
-        final fileName = pickedFile.name;
+        // 获取原始字节与大小
+        final originalBytes = await pickedFile.readAsBytes();
+        int sizeInBytes = originalBytes.length;
+        List<int> uploadBytes;
+        String fileName = pickedFile.name;
+
+        // 尝试统一转为 JPEG，同时确保最终上传字节为 JPEG
+        List<int>? jpegBytes;
+        if (!kIsWeb) {
+          try {
+            final tmp = await FlutterImageCompress.compressWithList(
+              originalBytes,
+              format: CompressFormat.jpeg,
+              quality: 90,
+            );
+            if (tmp != null && tmp.isNotEmpty) {
+              jpegBytes = tmp;
+            }
+          } catch (_) {
+            // 忽略转换失败，走后备路径
+            jpegBytes = null;
+          }
+        }
+
+        if (jpegBytes != null && jpegBytes.isNotEmpty) {
+          uploadBytes = jpegBytes;
+          fileName = 'avatar_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        } else if (sizeInBytes <= 1000000) {
+          uploadBytes = originalBytes;
+        } else {
+          // 仍然大于1MB，尝试用旧的按文件压缩路径（JPEG）
+          final path = pickedFile.path;
+          int quality = 85;
+          List<int>? compressed;
+          while (quality > 20) {
+            final res = await FlutterImageCompress.compressWithFile(
+              path,
+              quality: quality,
+              format: CompressFormat.jpeg,
+            );
+            if (res != null) {
+              compressed = res;
+              if (compressed != null && compressed.length <= 1000000) break;
+            }
+            quality -= 5;
+          }
+          if (compressed != null && compressed.isNotEmpty) {
+            uploadBytes = compressed;
+            fileName = 'avatar_${DateTime.now().millisecondsSinceEpoch}.jpg';
+          } else {
+            uploadBytes = originalBytes;
+          }
+        }
 
         // 显示加载指示器
         showDialog(
@@ -79,8 +131,15 @@ class _SettingsPageState extends State<SettingsPage> {
         );
 
         try {
-          await authProvider.uploadAvatar(fileBytes, fileName);
-          Navigator.pop(context); // 关闭加载对话框
+          await authProvider.uploadAvatar(uploadBytes, fileName);
+          // 上传成功后，自动刷新用户信息以确保头像及时显示
+          await _refreshUserProfile();
+          if (mounted) {
+            Navigator.pop(context); // 关闭加载对话框
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(const SnackBar(content: Text('头像更新成功')));
+          }
         } catch (e) {
           Navigator.pop(context); // 关闭加载对话框
           _showErrorDialog(context, '上传失败: $e');
@@ -156,49 +215,7 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Future<void> _showServerUrlDialog(BuildContext context) async {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    String currentUrl = '';
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      currentUrl = prefs.getString('server_base_url') ?? '';
-    } catch (e) {
-      // ignore
-    }
-
-    final controller = TextEditingController(text: currentUrl);
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('设置服务器地址'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            labelText: '服务器地址',
-            hintText: '如 http://192.168.1.100:8000',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () async {
-              final url = controller.text.trim();
-              if (url.isEmpty) {
-                Navigator.pop(context);
-                return;
-              }
-              await authProvider.setServerBaseUrl(url);
-              Navigator.pop(context);
-            },
-            child: const Text('保存'),
-          ),
-        ],
-      ),
-    );
-  }
+  // Removed: _showServerUrlDialog (no server address setting)
 
   void _showErrorDialog(BuildContext context, String message) {
     showDialog(
@@ -223,7 +240,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final user = Provider.of<AuthProvider>(context).user;
+    final authProvider = Provider.of<AuthProvider>(context);
+    final user = authProvider.user;
 
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
@@ -241,7 +259,9 @@ class _SettingsPageState extends State<SettingsPage> {
                   child: (user?.avatar?.isNotEmpty ?? false)
                       ? CircleAvatar(
                           radius: 32,
-                          backgroundImage: NetworkImage(user!.avatar!),
+                          backgroundImage: NetworkImage(
+                            '${user!.avatar!}?v=${authProvider.avatarVersion}',
+                          ),
                           backgroundColor: const Color(0xFF2E7D32),
                         )
                       : CircleAvatar(
@@ -360,12 +380,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               );
             },
-          ),
-          _buildSettingsTile(
-            icon: Icons.link,
-            title: '服务器地址',
-            color: Colors.blue,
-            onTap: () => _showServerUrlDialog(context),
           ),
           _buildSettingsTile(
             icon: Icons.language,

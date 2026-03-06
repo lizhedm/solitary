@@ -15,6 +15,9 @@ class AuthProvider with ChangeNotifier {
   bool _isLoading = false;
   // API服务实例
   final ApiService _apiService = ApiService();
+  // 头像版本，用于强制刷新头像图片缓存
+  int _avatarVersion = 0;
+  int get avatarVersion => _avatarVersion;
 
   AuthProvider() {
     // 已移除按平台自动覆盖基础URL的逻辑，统一使用云端地址
@@ -73,6 +76,7 @@ class AuthProvider with ChangeNotifier {
     try {
       final response = await _apiService.get('/users/me');
       _user = User.fromJson(response.data);
+      _avatarVersion++;
       notifyListeners();
     } catch (e) {
       print('Fetch user error: $e');
@@ -148,6 +152,7 @@ class AuthProvider with ChangeNotifier {
           email: email ?? _user!.email,
           avatar: avatar ?? _user!.avatar,
         );
+        _avatarVersion++;
       }
 
       notifyListeners();
