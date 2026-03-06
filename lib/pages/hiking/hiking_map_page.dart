@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:math' as math;
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -8,8 +10,11 @@ import 'package:amap_flutter_base/amap_flutter_base.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../models/user.dart';
+import '../../models/hiking_record.dart';
+import '../../services/api_service.dart';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
 import 'dart:ui' as ui;
 import 'sos_button.dart';
 import 'route_feedback_page.dart';
@@ -54,6 +59,13 @@ class _HikingMapPageState extends State<HikingMapPage>
   // 轨迹相关变量
   final List<LatLng> _pathPoints = [];
   bool _isTrackingLocation = false;
+  
+  // Statistics
+  double _totalDistance = 0.0; // km
+  int _calories = 0; // kcal
+  int _elevationGain = 0; // m
+  double? _startAltitude;
+  double? _currentAltitude;
 
   // markers 状态，便于更新定位头像标记
   Set<Marker> _markers = <Marker>{};
@@ -193,7 +205,30 @@ class _HikingMapPageState extends State<HikingMapPage>
       _position = location.latLng;
       // 如果在徒步模式，将位置添加到路径点
       if (_hikingState == 'RUNNING') {
+        if (_pathPoints.isNotEmpty) {
+          _totalDistance += _calculateDistance(_pathPoints.last, location.latLng);
+        }
         _pathPoints.add(location.latLng);
+        
+        // Update altitude
+        if (location.altitude != null) {
+          double alt = location.altitude!;
+          _currentAltitude = alt;
+          if (_startAltitude == null) {
+            _startAltitude = alt;
+          }
+          if (_startAltitude != null) {
+            // Calculate gain (simple difference from start, or cumulative gain?)
+            // PRD says: "记录点击开始徒步时的海拔高度和当前的海拔高度的差值" -> Difference from start
+            _elevationGain = (alt - _startAltitude!).round();
+            // Ensure non-negative if current < start? Usually gain implies cumulative positive change, 
+            // but "差值" implies difference. Let's stick to difference for now, maybe abs()?
+            // Usually elevation gain in hiking means total ascent. 
+            // But the requirement says "difference between start and current". 
+            // I will use simple difference. If negative (going down), show 0 or negative? 
+            // Let's assume user wants to know how much higher they are.
+          }
+        }
       }
     });
     // 添加头像标记
@@ -556,6 +591,19 @@ class _HikingMapPageState extends State<HikingMapPage>
     return byteData!.buffer.asUint8List();
   }
 
+  /// Calculate distance between two points in km
+  double _calculateDistance(LatLng p1, LatLng p2) {
+    var p = 0.017453292519943295;
+    var c = math.cos;
+    var a = 0.5 -
+        c((p2.latitude - p1.latitude) * p) / 2 +
+        c(p1.latitude * p) *
+            c(p2.latitude * p) *
+            (1 - c((p2.longitude - p1.longitude) * p)) /
+            2;
+    return 12742 * math.asin(math.sqrt(a));
+  }
+
   /// _startTimer - 开始计时
   void _startTimer() {
     _startTime = DateTime.now();
@@ -564,6 +612,11 @@ class _HikingMapPageState extends State<HikingMapPage>
         setState(() {
           final now = DateTime.now();
           _currentDuration = _accumulatedDuration + now.difference(_startTime!);
+          
+          // Calculate calories: 5.5 * 60 * time(hours)
+          // 5.5 * 60 = 330 kcal per hour
+          double hours = _currentDuration.inSeconds / 3600.0;
+          _calories = (330 * hours).round();
         });
       }
     });
@@ -720,10 +773,12 @@ class _HikingMapPageState extends State<HikingMapPage>
 
           // 顶部信息栏
           Positioned(
-            top: MediaQuery.of(context).padding.top + 10,
+            top: 10,
             left: 16,
             right: 16,
-            child: _buildTopInfoBar(),
+            child: SafeArea(
+              child: _buildTopInfoBar(),
+            ),
           ),
 
           // 右侧工具栏
