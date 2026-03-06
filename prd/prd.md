@@ -344,7 +344,7 @@ const StartButton = styled.TouchableOpacity`
   <ActionRow>
     <SecondaryButton onPress={pauseHiking}>
       <Icon name="pause.fill" />
-      <Text>暂停</Text>
+      <Text>休息</Text>
     </SecondaryButton>
     
     <SOSButton 
@@ -1504,7 +1504,7 @@ type HikingState =
   | 'IDLE'           // 未开始，在地图页预览
   | 'STARTING'       // 点击开始，获取GPS权限中
   | 'RECORDING'      // 正常记录中
-  | 'PAUSED'         // 用户主动暂停
+  | 'PAUSED'         // 用户主动休息/暂停
   | 'BACKGROUND'     // 后台记录中（应用切后台）
   | 'SOS_ACTIVE'     // 求救中（可与其他状态叠加）
   | 'ENDING'         // 点击结束，确认中

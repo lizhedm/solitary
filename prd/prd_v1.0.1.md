@@ -1,6 +1,6 @@
 ##### 原始需求
 
-##### 1、开始徒步后时间开始计算，点击暂停后时间暂停（按钮变成继续），可点击继续后时间继续计算。点击结束后，本次徒步完成，记录本次徒步数据到“徒步历史”页面中，
+##### 1、开始徒步后时间开始计算，点击休息后时间暂停（按钮变成继续），可点击继续后时间继续计算。点击结束后，本次徒步完成，记录本次徒步数据到“徒步历史”页面中，
 2、长按SOS按钮后，增加长按的动画。长按时间到后进入求救详情页面。
 3、在“消息中心”，增加1个tab：“我发布的路况”（“发布路况信息”页面中，我发布成功的历史路况信息会出现在这个tab）
 4、“消息中心”的“临时会话”tab中，分为两种消息：1️⃣别人单独发给我的单条消息；2️⃣我在“向周围人提问“中，发布成功的历史提问消息，这类消息进行折叠。例如这条提问消息发送给了8个其他用户，则这条消息在“临时会话”中只展示为一条，点击这一条后进入到分别和8个人的消息对话列表中，分别点击可以再进入和某个用户的具体对话中。
@@ -116,7 +116,7 @@ function calculateDisplayTime(timer: HikingTimer): string {
 
 | 状态   | 左侧按钮             | 中间SOS | 右侧按钮             |
 | ------ | -------------------- | ------- | -------------------- |
-| 运行中 | 暂停 ⏸️ (黄色#FF9800) | SOS 🔴   | 结束 ⏹️ (灰色#757575) |
+| 运行中 | 休息 ⏸️ (黄色#FF9800) | SOS 🔴   | 结束 ⏹️ (灰色#757575) |
 | 已暂停 | 继续 ▶️ (绿色#4CAF50) | SOS 🔴   | 结束 ⏹️ (灰色#757575) |
 
 ```typescript
@@ -136,7 +136,7 @@ function calculateDisplayTime(timer: HikingTimer): string {
       size={28}
     />
     <Text style={{color: timer.state === 'RUNNING' ? '#FF9800' : '#4CAF50'}}>
-      {timer.state === 'RUNNING' ? '暂停' : '继续'}
+      {timer.state === 'RUNNING' ? '休息' : '继续'}
     </Text>
   </LeftButton>
   
@@ -1119,7 +1119,7 @@ async function handleSnap(targetUserId: string) {
       />
       <GuideCard 
         icon="pause.circle.fill"
-        title="暂停与继续"
+        title="休息与继续"
         description="休息时可以暂停计时，回来后点击继续。结束徒步后数据将自动保存。"
       />
     </GuideSection>
@@ -1254,7 +1254,7 @@ async function handleSnap(targetUserId: string) {
 ```
 [IDLE: 00:00:00] 
     ↓ 点击开始
-[RUNNING: 计时中] ←→ [PAUSED: 暂停中]
+[RUNNING: 计时中] ←→ [PAUSED: 休息中]
     ↓ 点击结束          ↓ 点击继续
 [SAVING: 保存中] ───→ [RUNNING]
     ↓
@@ -1303,8 +1303,8 @@ interface HikingRecord {
   // 时间信息
   startTime: number;
   endTime: number;
-  duration: number; // 实际运动时长（扣除暂停）
-  totalPauseTime: number; // 总暂停时长
+  duration: number; // 实际运动时长（扣除休息/暂停）
+  totalPauseTime: number; // 总休息/暂停时长
   
   // 路线数据
   coordinates: Array<{

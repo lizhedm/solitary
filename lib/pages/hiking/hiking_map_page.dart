@@ -5,7 +5,11 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:amap_flutter_map/amap_flutter_map.dart';
 import 'package:amap_flutter_base/amap_flutter_base.dart';
+import 'package:provider/provider.dart';
+import '../../providers/auth_provider.dart';
+import '../../models/user.dart';
 import 'dart:typed_data';
+import 'package:http/http.dart' as http;
 import 'dart:ui' as ui;
 import 'sos_button.dart';
 import 'route_feedback_page.dart';
@@ -36,7 +40,7 @@ class _HikingMapPageState extends State<HikingMapPage>
   LatLng? _position;
   // 起点位置标记
   LatLng? _startMarkerPosition;
-  // 徒步状态：IDLE（空闲）、RUNNING（进行中）、PAUSED（暂停）
+  // 徒步状态：IDLE（空闲）、RUNNING（进行中）、PAUSED（休息/暂停）
   String _hikingState = 'IDLE';
   // 是否激活SOS模式
   bool _isSOSActive = false;
@@ -354,9 +358,34 @@ class _HikingMapPageState extends State<HikingMapPage>
   /// 添加头像标记到指定位置
   Future<void> _addAvatarMarker(LatLng position) async {
     try {
-      const String initial = 'U';
-      final bytes = await _createAvatarMarkerBytes(initial, size: 64);
-      final descriptor = BitmapDescriptor.fromBytes(bytes);
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      User? currentUser = authProvider.user;
+      BitmapDescriptor? descriptor;
+      if (currentUser != null && currentUser.avatar != null) {
+        final avatarUrl =
+            '${currentUser.avatar!}?v=${authProvider.avatarVersion}';
+        try {
+          final token = authProvider.token;
+          final headers = token != null
+              ? {'Authorization': 'Bearer $token'}
+              : null;
+          final resp = await http.get(Uri.parse(avatarUrl), headers: headers);
+          if (resp.statusCode == 200) {
+            final circleBytes = await _avatarCircleBytesFromBytes(
+              resp.bodyBytes,
+            );
+            descriptor = BitmapDescriptor.fromBytes(circleBytes);
+          }
+        } catch (_) {
+          descriptor = null;
+        }
+      }
+      if (descriptor == null) {
+        // 备用：使用默认的圆形图标带字母U
+        final String initial = 'U';
+        final bytes = await _createAvatarMarkerBytes(initial, size: 64);
+        descriptor = BitmapDescriptor.fromBytes(bytes);
+      }
       if (mounted) {
         setState(() {
           // 移除现有的头像标记（通过anchor识别）
@@ -367,7 +396,7 @@ class _HikingMapPageState extends State<HikingMapPage>
           _markers.add(
             Marker(
               position: position,
-              icon: descriptor,
+              icon: descriptor!,
               anchor: const Offset(0.5, 0.5),
               zIndex: 100,
             ),
@@ -377,6 +406,83 @@ class _HikingMapPageState extends State<HikingMapPage>
     } catch (e) {
       debugPrint('Create avatar marker failed: $e');
     }
+  }
+
+  // End marker helper: create an end marker with 'E' inside a circle
+  Future<Uint8List> _createEndMarkerBytes(String label, {int size = 32}) async {
+    // For simplicity, reuse the same style as the start marker but with arbitrary label
+    return await _createStartMarkerBytes(label, size: size);
+  }
+
+  // Add an End marker at the given position, to correspond with Start marker
+  Future<void> _addEndMarker(LatLng position) async {
+    try {
+      final bytes = await _createEndMarkerBytes('E', size: 32);
+      final descriptor = BitmapDescriptor.fromBytes(bytes);
+      if (mounted) {
+        setState(() {
+          // Use a distinct anchor to avoid conflicting with Start marker (0.5,0.5))
+          _markers.removeWhere(
+            (marker) => marker.anchor == const Offset(0.75, 0.5),
+          );
+          _markers.add(
+            Marker(
+              position: position,
+              icon: descriptor,
+              anchor: const Offset(0.75, 0.5), // 与 Start 区分开
+              zIndex: 60,
+            ),
+          );
+        });
+      }
+    } catch (e) {
+      debugPrint('Create end marker failed: $e');
+    }
+  }
+
+  /// 将图片字节转换为圆形标记图标的字节流（64x64）
+  Future<Uint8List> _avatarCircleBytesFromBytes(Uint8List imageBytes) async {
+    final Completer<ui.Image> completer = Completer();
+    ui.decodeImageFromList(imageBytes, (ui.Image img) {
+      completer.complete(img);
+    });
+    final ui.Image avatarImage = await completer.future;
+
+    final int size = 64;
+    final double centerX = size / 2.0;
+    final double centerY = size / 2.0;
+    final Offset center = Offset(centerX, centerY);
+
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+
+    // 1) 内部头像圆圈，带一个外部绿色圆环（环宽 4px，内半径 28，外半径 30）
+    final ringPaint = Paint()
+      ..color = const Color(0xFF2E7D32)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4.0;
+    // 外环半径 30
+    canvas.drawCircle(Offset(centerX, centerY), 30.0, ringPaint);
+
+    // 2) 在同一画布内裁剪一个圆形区域，绘制头像
+    final clipPath = Path()
+      ..addOval(Rect.fromCircle(center: center, radius: 28.0));
+    canvas.clipPath(clipPath);
+    final Rect src = Rect.fromLTWH(
+      0,
+      0,
+      avatarImage.width.toDouble(),
+      avatarImage.height.toDouble(),
+    );
+    final Rect dst = Rect.fromCircle(center: center, radius: 28.0);
+    canvas.drawImageRect(avatarImage, src, dst, Paint());
+
+    final ui.Picture picture = recorder.endRecording();
+    final ui.Image finalImg = await picture.toImage(size, size);
+    final ByteData? byteData = await finalImg.toByteData(
+      format: ui.ImageByteFormat.png,
+    );
+    return byteData!.buffer.asUint8List();
   }
 
   /// 添加起点标记
@@ -882,7 +988,7 @@ class _HikingMapPageState extends State<HikingMapPage>
       children: [
         _buildCircleAction(
           icon: isRunning ? Icons.pause : Icons.play_arrow,
-          label: isRunning ? '暂停' : '继续',
+          label: isRunning ? '休息' : '继续',
           color: isRunning ? Colors.orange : Colors.green,
           onTap: () {
             setState(() {
@@ -960,6 +1066,11 @@ class _HikingMapPageState extends State<HikingMapPage>
             onPressed: () {
               Navigator.pop(ctx);
               _stopTimer();
+              // 结束点标记：在当前线段末端添加 End 圆圈标记
+              final LatLng endPos = (_pathPoints.isNotEmpty)
+                  ? _pathPoints.last
+                  : (_position ?? _defaultPosition);
+              _addEndMarker(endPos);
               setState(() {
                 _hikingState = 'IDLE';
                 _isTrackingLocation = false;

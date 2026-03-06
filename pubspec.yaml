@@ -44,6 +44,7 @@ dependencies:
   geolocator: ^14.0.2
   permission_handler: ^12.0.1
   image_picker: ^1.2.1
+  http: ^1.6.0
   flutter_image_compress: ^2.4.0
   # network_info_plus: ^7.0.0  (已移除，统一使用云端后端地址)
   web: ^1.1.1

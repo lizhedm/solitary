@@ -12,7 +12,7 @@ class UserGuidePage extends StatelessWidget {
         children: const [
           _GuideCard(
             title: '开始徒步',
-            content: '点击主页底部的“开始徒步”按钮，系统将自动记录您的轨迹。长按暂停按钮可以暂停记录。',
+            content: '点击主页底部的“开始徒步”按钮，系统将自动记录您的轨迹。点击休息按钮可以暂停记录。',
             icon: Icons.directions_walk,
           ),
           SizedBox(height: 16),

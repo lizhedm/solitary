@@ -25,6 +25,8 @@ class AuthProvider with ChangeNotifier {
 
   // 是否已认证（token不为空）
   bool get isAuthenticated => _token != null;
+  // 获取当前 token（用于跨组件访问，尤其是需要在网络请求中传递时）
+  String? get token => _token;
   // 获取当前用户
   User? get user => _user;
   // 获取加载状态
