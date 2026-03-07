@@ -12,6 +12,8 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     nickname = Column(String)
     avatar = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    wechat_openid = Column(String, nullable=True)
     
     # 徒步状态与位置
     is_hiking = Column(Boolean, default=False, index=True)

@@ -345,6 +345,7 @@ class _HikingMapPageState extends State<HikingMapPage>
   Future<void> _locateToCurrentPosition() async {
     debugPrint('Location button pressed');
 
+    // 1. Check/Request Permission
     var status = await Permission.location.status;
     if (!status.isGranted) {
       status = await Permission.location.request();
@@ -357,38 +358,34 @@ class _HikingMapPageState extends State<HikingMapPage>
         return;
       }
     }
-
-    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('请开启设备定位服务')));
-      }
-      return;
-    }
-
-    // 检查当前是否有有效位置
-    bool hasValidPosition = _position != null && _isValidCoordinate(_position!);
-
-    if (hasValidPosition) {
-      // 已经有有效位置，直接移动地图并添加头像标记
+    
+    // 2. Check Service Status (Optional, sometimes Geolocator check fails on iOS even if enabled)
+    // We can skip strict Geolocator service check if we trust AMap or want to avoid false negatives.
+    // However, checking enabled is good practice. 
+    // On iOS, sometimes isLocationServiceEnabled returns false if permission is not determined yet?
+    // Let's rely on AMap callbacks mostly, but basic check is fine.
+    
+    // 3. Check if we already have a valid position from AMap callback
+    if (_position != null && _isValidCoordinate(_position!)) {
       _amapController?.moveCamera(CameraUpdate.newLatLngZoom(_position!, 17));
       _addAvatarMarker(_position!);
       return;
     }
 
-    // 没有有效位置，设置标志等待高德定位回调
-    _centerOnNextLocation = true;
+    // 4. If no position yet, set flag to center on next update
+    setState(() {
+      _centerOnNextLocation = true;
+    });
 
-    // 同时使用geolocator作为后备方案获取一次位置
+    // 5. Force AMap to locate? AMap usually auto-locates if myLocationEnabled is true.
+    // But we can also try Geolocator as fallback/accelerator
     _getLocationWithGeolocator();
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('正在定位...'),
-          duration: Duration(seconds: 3),
+          duration: Duration(seconds: 2),
         ),
       );
     }

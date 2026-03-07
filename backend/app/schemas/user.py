@@ -13,6 +13,8 @@ class User(UserBase):
     id: int
     is_active: bool
     avatar: Optional[str] = None
+    phone: Optional[str] = None
+    wechat_openid: Optional[str] = None
     
     # 徒步状态与位置
     is_hiking: bool = False
