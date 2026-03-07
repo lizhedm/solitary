@@ -80,6 +80,7 @@ pip install -r requirements.txt
 # 或手动安装核心包: pip install fastapi uvicorn sqlalchemy python-jose[cryptography] passlib[bcrypt] python-multipart
 
 # 启动服务
+pkill -f uvicorn
 nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload > uvicorn.log 2>&1 &
 ```
 *注：后端默认运行在 `http://localhost:8000`，API 文档地址 `http://localhost:8000/docs`*
