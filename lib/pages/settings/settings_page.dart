@@ -243,6 +243,12 @@ class _SettingsPageState extends State<SettingsPage> {
     final authProvider = Provider.of<AuthProvider>(context);
     final user = authProvider.user;
 
+    // Check if user is logged out, if so, we don't need to render the settings page content
+    // The AuthWrapper in main.dart will handle the redirection to login page
+    if (!authProvider.isAuthenticated) {
+      return const SizedBox.shrink();
+    }
+
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
@@ -260,7 +266,9 @@ class _SettingsPageState extends State<SettingsPage> {
                       ? CircleAvatar(
                           radius: 32,
                           backgroundImage: NetworkImage(
-                            '${user!.avatar!}?v=${authProvider.avatarVersion}',
+                            user!.avatar!.startsWith('http') 
+                                ? '${user.avatar!}?v=${authProvider.avatarVersion}'
+                                : 'http://114.55.148.245:8000${user.avatar!}?v=${authProvider.avatarVersion}',
                           ),
                           backgroundColor: const Color(0xFF2E7D32),
                         )
@@ -304,9 +312,11 @@ class _SettingsPageState extends State<SettingsPage> {
                               ),
                               onPressed: () async {
                                 await _refreshUserProfile();
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('已刷新用户信息')),
-                                );
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('已刷新用户信息')),
+                                  );
+                                }
                               },
                             ),
                             const Icon(
@@ -450,7 +460,28 @@ class _SettingsPageState extends State<SettingsPage> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: OutlinedButton(
               onPressed: () {
-                Provider.of<AuthProvider>(context, listen: false).logout();
+                // Show confirmation dialog before logout
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('退出登录'),
+                    content: const Text('确定要退出登录吗？'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('取消'),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.pop(context); // Close dialog
+                          Provider.of<AuthProvider>(context, listen: false).logout();
+                          // No need to manually navigate, AuthWrapper will handle it
+                        },
+                        child: const Text('退出', style: TextStyle(color: Colors.red)),
+                      ),
+                    ],
+                  ),
+                );
               },
               style: OutlinedButton.styleFrom(
                 foregroundColor: Colors.red,

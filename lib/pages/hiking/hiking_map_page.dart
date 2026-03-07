@@ -821,51 +821,71 @@ class _HikingMapPageState extends State<HikingMapPage>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // GPS状态指示
-          Row(
+          // 左侧：GPS状态和徒步时长
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                _position != null ? Icons.gps_fixed : Icons.gps_not_fixed,
-                color: _position != null
-                    ? const Color(0xFF2E7D32)
-                    : Colors.grey,
-                size: 16,
+              Row(
+                children: [
+                  Icon(
+                    _position != null ? Icons.gps_fixed : Icons.gps_not_fixed,
+                    color: _position != null
+                        ? const Color(0xFF2E7D32)
+                        : Colors.grey,
+                    size: 14,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _position != null ? 'GPS 良好' : '搜索GPS...',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 4),
-              Text(
-                _position != null ? 'GPS 良好' : '搜索GPS...',
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-          // 徒步时长或状态提示
-          if (_hikingState != 'IDLE')
-            Column(
-              children: [
+              const SizedBox(height: 2),
+              if (_hikingState != 'IDLE')
                 Text(
                   _formatDuration(_currentDuration),
                   style: const TextStyle(
-                    fontSize: 18,
+                    fontSize: 16,
                     fontWeight: FontWeight.bold,
                   ),
-                ),
+                )
+              else
                 const Text(
-                  '徒步时长',
-                  style: TextStyle(fontSize: 10, color: Colors.grey),
+                  '准备出发',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey,
+                  ),
                 ),
-              ],
-            )
-          else
-            const Text(
-              '准备出发',
-              style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold),
+            ],
+          ),
+          
+          // 右侧：实时数据（公里数、热量、爬升）
+          if (_hikingState != 'IDLE')
+            Expanded(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  _buildStatItem(Icons.directions_walk, '${_totalDistance.toStringAsFixed(1)}km', Colors.green),
+                  const SizedBox(width: 8),
+                  _buildStatItem(Icons.local_fire_department, '$_calories kcal', Colors.orange),
+                  const SizedBox(width: 8),
+                  _buildStatItem(Icons.terrain, '$_elevationGain m', Colors.brown),
+                ],
+              ),
             ),
+
           // SOS状态指示
           if (_isSOSActive)
             Container(
+              margin: const EdgeInsets.only(left: 8),
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color: const Color(0xFFD32F2F),
@@ -879,11 +899,27 @@ class _HikingMapPageState extends State<HikingMapPage>
                   fontWeight: FontWeight.bold,
                 ),
               ),
-            )
-          else
-            const SizedBox(width: 40),
+            ),
         ],
       ),
+    );
+  }
+
+  Widget _buildStatItem(IconData icon, String value, Color color) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+      ],
     );
   }
 
@@ -1105,6 +1141,93 @@ class _HikingMapPageState extends State<HikingMapPage>
     );
   }
 
+  /// _endHiking - 结束徒步并保存数据
+  Future<void> _endHiking() async {
+    // 1. 停止计时和定位
+    _stopTimer();
+    final LatLng endPos = (_pathPoints.isNotEmpty)
+        ? _pathPoints.last
+        : (_position ?? _defaultPosition);
+    _addEndMarker(endPos);
+    
+    // 2. 截图
+    Uint8List? snapshotBytes;
+    if (_amapController != null) {
+      try {
+        snapshotBytes = await _amapController!.takeSnapshot();
+      } catch (e) {
+        debugPrint('Take snapshot failed: $e');
+      }
+    }
+    
+    // 3. 上传截图
+    String? snapshotUrl;
+    if (snapshotBytes != null) {
+      try {
+        final formData = FormData.fromMap({
+          'file': MultipartFile.fromBytes(
+            snapshotBytes,
+            filename: 'snapshot_${DateTime.now().millisecondsSinceEpoch}.png',
+          ),
+        });
+        
+        final response = await ApiService().post('/upload/snapshot', data: formData);
+        if (response.statusCode == 200 && response.data != null) {
+          snapshotUrl = response.data['url'];
+        }
+      } catch (e) {
+        debugPrint('Upload snapshot failed: $e');
+      }
+    }
+    
+    // 4. 创建记录
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final userId = authProvider.user?.id ?? 0;
+    
+    final record = HikingRecord(
+      id: '', // Backend will generate ID
+      userId: userId,
+      startTime: _startTime ?? DateTime.now().subtract(_currentDuration),
+      endTime: DateTime.now(),
+      duration: _currentDuration.inSeconds,
+      distance: _totalDistance,
+      calories: _calories,
+      elevationGain: _elevationGain,
+      startLocation: 'Unknown', 
+      endLocation: 'Unknown',
+      mapSnapshotUrl: snapshotUrl,
+      coordinatesJson: jsonEncode(_pathPoints.map((p) => {'lat': p.latitude, 'lng': p.longitude}).toList()),
+    );
+    
+    // 5. 保存记录
+    try {
+      await ApiService().post('/hiking-records', data: record.toJson());
+    } catch (e) {
+      debugPrint('Save hiking record failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('保存记录失败: $e')));
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _hikingState = 'IDLE';
+        _isTrackingLocation = false;
+        _totalDistance = 0.0;
+        _calories = 0;
+        _elevationGain = 0;
+        _startAltitude = null;
+        _currentAltitude = null;
+      });
+      
+      // 6. 跳转到历史页面
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => const HikingHistoryPage()),
+      );
+    }
+  }
+
   /// _showEndHikingDialog - 显示结束徒步对话框
   void _showEndHikingDialog() {
     showDialog(
@@ -1120,16 +1243,7 @@ class _HikingMapPageState extends State<HikingMapPage>
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
-              _stopTimer();
-              // 结束点标记：在当前线段末端添加 End 圆圈标记
-              final LatLng endPos = (_pathPoints.isNotEmpty)
-                  ? _pathPoints.last
-                  : (_position ?? _defaultPosition);
-              _addEndMarker(endPos);
-              setState(() {
-                _hikingState = 'IDLE';
-                _isTrackingLocation = false;
-              });
+              _endHiking();
             },
             child: const Text('确定'),
           ),

@@ -80,9 +80,36 @@ pip install -r requirements.txt
 # 或手动安装核心包: pip install fastapi uvicorn sqlalchemy python-jose[cryptography] passlib[bcrypt] python-multipart
 
 # 启动服务
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload > uvicorn.log 2>&1 &
 ```
 *注：后端默认运行在 `http://localhost:8000`，API 文档地址 `http://localhost:8000/docs`*
+
+在云服务器部署和更新后端服务
+
+```bash
+# 1. 进入项目目录（或创建新目录）
+mkdir -p /root/solitary
+cd /root/solitary
+
+# 2. 初始化Git仓库
+git init
+git remote add origin https://github.com/lizhedm/solitary.git
+
+# 3. 启用稀疏检出
+git config core.sparsecheckout true
+
+# 4. 指定只拉取backend目录
+echo "backend/" >> .git/info/sparse-checkout
+
+# 5. 拉取代码（只下载backend目录）
+git pull origin master
+
+# 6. 查看结果
+ls -la
+# 应该只看到 backend 目录
+```
+
+
 
 ### 3. 启动 App
 

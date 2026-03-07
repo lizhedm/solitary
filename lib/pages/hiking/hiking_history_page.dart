@@ -64,6 +64,12 @@ class _HikingHistoryPageState extends State<HikingHistoryPage> {
     return groups;
   }
 
+  String _getCorrectedImageUrl(String? url) {
+    if (url == null || url.isEmpty) return '';
+    if (url.startsWith('http')) return url;
+    return 'http://114.55.148.245:8000$url';
+  }
+
   @override
   Widget build(BuildContext context) {
     final groupedRecords = _groupByMonth(_records);
@@ -141,7 +147,7 @@ class _HikingHistoryPageState extends State<HikingHistoryPage> {
                                       ClipRRect(
                                         borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
                                         child: Image.network(
-                                          item.mapSnapshotUrl!,
+                                          _getCorrectedImageUrl(item.mapSnapshotUrl),
                                           height: 150,
                                           width: double.infinity,
                                           fit: BoxFit.cover,
@@ -267,6 +273,12 @@ class HistoryDetailPage extends StatefulWidget {
 class _HistoryDetailPageState extends State<HistoryDetailPage> {
   bool _showReplay = false;
 
+  String _getCorrectedImageUrl(String? url) {
+    if (url == null || url.isEmpty) return '';
+    if (url.startsWith('http')) return url;
+    return 'http://114.55.148.245:8000$url';
+  }
+
   @override
   Widget build(BuildContext context) {
     final record = widget.record;
@@ -288,7 +300,10 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
                   child: _showReplay 
                     ? _buildReplayMap()
                     : (record.mapSnapshotUrl != null 
-                        ? Image.network(record.mapSnapshotUrl!, fit: BoxFit.cover)
+                        ? Image.network(
+                            _getCorrectedImageUrl(record.mapSnapshotUrl),
+                            fit: BoxFit.cover,
+                          )
                         : Container(
                             color: Colors.grey[200],
                             child: const Center(
