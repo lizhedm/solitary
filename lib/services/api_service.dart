@@ -71,4 +71,10 @@ class ApiService {
   Future<Response> post(String path, {dynamic data, Options? options}) async {
     return await _dio.post(path, data: data, options: options);
   }
+
+  /// put - PUT请求方法
+  /// path: 请求路径, data: 请求数据
+  Future<Response> put(String path, {dynamic data, Options? options}) async {
+    return await _dio.put(path, data: data, options: options);
+  }
 }

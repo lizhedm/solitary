@@ -1,8 +1,11 @@
 import os
 import shutil
+import math
+import time
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from typing import List
 from app.database.database import get_db
 from app.models.hiking import HikingRecord
@@ -33,8 +36,216 @@ class HikingRecordOut(HikingRecordCreate):
     class Config:
         from_attributes = True
 
+class LocationUpdate(BaseModel):
+    lat: float
+    lng: float
+    accuracy: float | None = None
+    altitude: float | None = None
+
+class NearbyUser(BaseModel):
+    id: int
+    nickname: str | None = None
+    avatar: str | None = None
+    lat: float
+    lng: float
+    distance: float
+    visible_range: int
+
+class PrivacySettingsUpdate(BaseModel):
+    visible_on_map: bool | None = None
+    visible_range: int | None = None
+    receive_sos: bool | None = None
+    receive_questions: bool | None = None
+    receive_feedback: bool | None = None
+
+# -----------------------------------------------------------------------------
+# 1. 徒步状态管理 (Start/End/Heartbeat)
+# -----------------------------------------------------------------------------
+
+@router.post("/hiking/start")
+def start_hiking(
+    location: LocationUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    开始徒步：
+    1. 更新用户状态 is_hiking = True
+    2. 更新初始位置和时间
+    """
+    current_user.is_hiking = True
+    current_user.current_lat = location.lat
+    current_user.current_lng = location.lng
+    current_user.location_updated_at = int(time.time() * 1000)
+    
+    db.commit()
+    return {"success": True, "message": "Hiking started"}
+
+@router.post("/hiking/end")
+def end_hiking(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    结束徒步：
+    1. 更新用户状态 is_hiking = False
+    2. 清除位置信息
+    """
+    current_user.is_hiking = False
+    current_user.current_lat = None
+    current_user.current_lng = None
+    current_user.location_updated_at = None
+    
+    db.commit()
+    return {"success": True, "message": "Hiking ended"}
+
+@router.post("/users/heartbeat")
+def heartbeat(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    心跳保活：
+    更新 location_updated_at，防止被判定为离线
+    """
+    if current_user.is_hiking:
+        current_user.location_updated_at = int(time.time() * 1000)
+        db.commit()
+    return {"success": True}
+
+@router.post("/users/offline")
+def user_offline(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    用户离线（App退出）：
+    清除徒步状态
+    """
+    current_user.is_hiking = False
+    current_user.current_lat = None
+    current_user.current_lng = None
+    current_user.location_updated_at = None
+    db.commit()
+    return {"success": True}
+
+# -----------------------------------------------------------------------------
+# 2. 位置更新与周围用户查询
+# -----------------------------------------------------------------------------
+
+def calculate_distance(lat1, lon1, lat2, lon2):
+    """
+    Haversine formula to calculate distance between two points in km
+    """
+    R = 6371  # Earth radius in km
+    dLat = math.radians(lat2 - lat1)
+    dLon = math.radians(lon2 - lon1)
+    a = math.sin(dLat/2) * math.sin(dLat/2) + \
+        math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * \
+        math.sin(dLon/2) * math.sin(dLon/2)
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return R * c
+
+@router.post("/users/location")
+def update_location(
+    location: LocationUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    更新位置并返回周围用户
+    """
+    # 1. 更新当前用户位置
+    current_user.current_lat = location.lat
+    current_user.current_lng = location.lng
+    current_user.location_updated_at = int(time.time() * 1000)
+    current_user.is_hiking = True # 确保状态正确
+    db.commit()
+    
+    # 2. 查询周围用户
+    # 逻辑：
+    # - 排除自己
+    # - 对方正在徒步 (is_hiking=True)
+    # - 对方开启了地图可见 (visible_on_map=True)
+    # - 距离 <= 10km
+    # - 距离 <= 对方的可见范围 (visible_range)
+    
+    # 获取所有潜在的附近用户（简单起见，这里先获取所有正在徒步的用户，然后在内存中过滤距离）
+    # 生产环境应使用PostGIS或数据库空间索引
+    
+    active_users = db.query(User).filter(
+        User.id != current_user.id,
+        User.is_hiking == True,
+        User.visible_on_map == True,
+        User.current_lat != None,
+        User.current_lng != None
+    ).all()
+    
+    nearby_users = []
+    for user in active_users:
+        dist = calculate_distance(location.lat, location.lng, user.current_lat, user.current_lng)
+        
+        # 判定条件：距离 <= 10km 且 距离 <= 对方设定的可见范围
+        if dist <= 10.0 and dist <= user.visible_range:
+            nearby_users.append({
+                "id": user.id,
+                "nickname": user.nickname,
+                "avatar": user.avatar,
+                "lat": user.current_lat,
+                "lng": user.current_lng,
+                "distance": round(dist, 2),
+                "visible_range": user.visible_range
+            })
+            
+    # 按距离排序
+    nearby_users.sort(key=lambda x: x["distance"])
+    
+    return {
+        "success": True,
+        "nearbyUsers": nearby_users
+    }
+
+# -----------------------------------------------------------------------------
+# 3. 隐私设置
+# -----------------------------------------------------------------------------
+
+@router.get("/users/privacy-settings")
+def get_privacy_settings(current_user: User = Depends(get_current_user)):
+    return {
+        "visible_on_map": current_user.visible_on_map,
+        "visible_range": current_user.visible_range,
+        "receive_sos": current_user.receive_sos,
+        "receive_questions": current_user.receive_questions,
+        "receive_feedback": current_user.receive_feedback
+    }
+
+@router.put("/users/privacy-settings")
+def update_privacy_settings(
+    settings: PrivacySettingsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if settings.visible_on_map is not None:
+        current_user.visible_on_map = settings.visible_on_map
+    if settings.visible_range is not None:
+        current_user.visible_range = settings.visible_range
+    if settings.receive_sos is not None:
+        current_user.receive_sos = settings.receive_sos
+    if settings.receive_questions is not None:
+        current_user.receive_questions = settings.receive_questions
+    if settings.receive_feedback is not None:
+        current_user.receive_feedback = settings.receive_feedback
+        
+    db.commit()
+    return {"success": True}
+
+# -----------------------------------------------------------------------------
+# 4. 原有的徒步记录接口
+# -----------------------------------------------------------------------------
+
 @router.post("/upload/snapshot")
 async def upload_snapshot(file: UploadFile = File(...)):
+    # ... existing code ...
     try:
         # Create directory if not exists
         upload_dir = "uploads/snapshots"
@@ -59,6 +270,7 @@ def create_hiking_record(
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user)
 ):
+    # ... existing code ...
     # Map map_snapshot_url to map_snapshot for DB
     db_record = HikingRecord(
         start_time=record.start_time,
@@ -88,13 +300,11 @@ def get_hiking_records(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    # ... existing code ...
     # Filter by user_id if provided, otherwise use current user
-    # Ideally should only allow accessing own records or admin access
     target_user_id = user_id if user_id else current_user.id
     if target_user_id != current_user.id:
-        # Simple permission check: only allow own data for now
-        # raise HTTPException(status_code=403, detail="Not authorized")
-        pass # Allow for demo purpose if needed, or strictly enforce:
+        pass 
         target_user_id = current_user.id
 
     query = db.query(HikingRecord).filter(HikingRecord.user_id == target_user_id)
@@ -102,20 +312,9 @@ def get_hiking_records(
     records = query.order_by(HikingRecord.start_time.desc()).offset(skip).limit(limit).all()
     
     # Calculate aggregates
-    total_distance = sum(r.distance for r in records) # This is sum of *fetched* records, maybe should be total?
-    # For total stats, we should query all records without limit
     all_records = db.query(HikingRecord).filter(HikingRecord.user_id == target_user_id).all()
     total_distance_all = sum(r.distance for r in all_records)
     total_elevation_gain_all = sum(r.elevation_gain for r in all_records)
-    
-    # Transform records to match frontend expectation if needed, or use response_model
-    # The frontend expects:
-    # {
-    #   "records": [...],
-    #   "total_count": 10,
-    #   "total_distance": 100.0,
-    #   "total_elevation_gain": 500
-    # }
     
     result_records = []
     for r in records:

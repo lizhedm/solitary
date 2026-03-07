@@ -20,6 +20,7 @@ import 'sos_button.dart';
 import 'route_feedback_page.dart';
 import 'ask_question_page.dart';
 import 'hiking_history_page.dart';
+import '../../services/location_manager.dart';
 
 /// HikingMapPage - 徒步地图页面
 /// 应用的核心页面，使用flutter_map显示地图，支持实时定位、徒步轨迹记录等功能
@@ -87,6 +88,10 @@ class _HikingMapPageState extends State<HikingMapPage>
   // 初始地图位置（北京）
   static const LatLng _defaultPosition = LatLng(39.9042, 116.4074);
 
+  // 附近的徒步者
+  List<dynamic> _nearbyHikers = [];
+  Timer? _nearbyUpdateTimer;
+  
   @override
   void initState() {
     super.initState();
@@ -94,16 +99,107 @@ class _HikingMapPageState extends State<HikingMapPage>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initialize();
     });
+    // Start periodic nearby user updates
+    _nearbyUpdateTimer = Timer.periodic(const Duration(seconds: 10), (_) => _updateNearbyHikers());
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    _nearbyUpdateTimer?.cancel();
     _locationSubscription?.cancel();
     _amapController?.disponse();
     super.dispose();
   }
+
+  Future<void> _updateNearbyHikers() async {
+    if (_position == null || _hikingState == 'IDLE') return;
+
+    try {
+      final response = await ApiService().post('/users/location', data: {
+        'lat': _position!.latitude,
+        'lng': _position!.longitude,
+      });
+
+      if (response.statusCode == 200 && response.data != null) {
+        if (mounted) {
+          setState(() {
+            _nearbyHikers = response.data['nearbyUsers'] ?? [];
+            _updateMapMarkers();
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Update location/nearby failed: $e');
+    }
+  }
+
+  void _updateMapMarkers() {
+    final Set<Marker> newMarkers = Set.from(_markers);
+    
+    // Remove old nearby markers (identified by ID prefix or type)
+    // Since we don't have types, we can clear all except start/end/current
+    // Better: rebuild markers from scratch based on current state
+    
+    // But we need to preserve start/end/current.
+    // Let's identify nearby markers by a specific anchor or ID convention if possible.
+    // Or just clear markers that are NOT current/start/end.
+    
+    newMarkers.removeWhere((m) => 
+      m.anchor == const Offset(0.5, 1.0) // Assume nearby markers use bottom-center anchor
+    );
+
+    for (var user in _nearbyHikers) {
+      // Create marker for nearby user
+      // We need a way to create markers asynchronously or load them. 
+      // For now, let's use a simple method. 
+      // Ideally we should cache marker icons.
+      
+      _createNearbyMarker(user).then((marker) {
+        if (mounted) {
+          setState(() {
+            _markers.add(marker);
+          });
+        }
+      });
+    }
+  }
+
+  Future<Marker> _createNearbyMarker(dynamic user) async {
+    // Simple marker for now
+    // In real app, download avatar and crop.
+    // Re-use _createAvatarMarkerBytes logic but with user's avatar
+    
+    BitmapDescriptor icon;
+    if (user['avatar'] != null) {
+        // ... logic to load avatar ...
+        // For simplicity/speed in this turn, use default or simple color
+        // Let's use a different color for others
+        final bytes = await _createAvatarMarkerBytes(
+            user['nickname']?.substring(0, 1).toUpperCase() ?? '?', 
+            size: 64,
+            color: Colors.blue
+        );
+        icon = BitmapDescriptor.fromBytes(bytes);
+    } else {
+        final bytes = await _createAvatarMarkerBytes(
+            user['nickname']?.substring(0, 1).toUpperCase() ?? '?', 
+            size: 64, 
+            color: Colors.blue
+        );
+        icon = BitmapDescriptor.fromBytes(bytes);
+    }
+
+    return Marker(
+      position: LatLng(user['lat'], user['lng']),
+      icon: icon,
+      anchor: const Offset(0.5, 0.5),
+      infoWindow: InfoWindow(title: user['nickname']),
+    );
+  }
+
+
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -350,13 +446,14 @@ class _HikingMapPageState extends State<HikingMapPage>
   Future<Uint8List> _createAvatarMarkerBytes(
     String label, {
     int size = 128,
+    Color color = const Color(0xFF2E7D32),
   }) async {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     final double dSize = size.toDouble();
 
     // 背景圆
-    final Paint bgPaint = Paint()..color = const ui.Color(0xFF2E7D32);
+    final Paint bgPaint = Paint()..color = color;
     final Offset center = Offset(dSize / 2, dSize / 2);
     canvas.drawCircle(center, dSize / 2, bgPaint);
 
@@ -370,7 +467,7 @@ class _HikingMapPageState extends State<HikingMapPage>
       fontWeight: ui.FontWeight.bold,
     );
     final ui.TextStyle textStyle = ui.TextStyle(
-      color: ui.Color(0xFF2E7D32),
+      color: color,
       fontSize: dSize * 0.45,
     );
     final ui.ParagraphBuilder pb = ui.ParagraphBuilder(paragraphStyle)
@@ -1047,6 +1144,16 @@ class _HikingMapPageState extends State<HikingMapPage>
             _addStartMarker(_position!);
             _addAvatarMarker(_position!);
           }
+          
+          LocationManager().startHiking(); // Notify backend hiking started
+          
+          // Initial location update to set is_hiking=true on backend immediately
+          if (_position != null) {
+             ApiService().post('/hiking/start', data: {
+                'lat': _position!.latitude,
+                'lng': _position!.longitude,
+             });
+          }
         },
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF2E7D32),
@@ -1145,6 +1252,7 @@ class _HikingMapPageState extends State<HikingMapPage>
   Future<void> _endHiking() async {
     // 1. 停止计时和定位
     _stopTimer();
+    LocationManager().stopHiking(); // Notify backend hiking stopped
     final LatLng endPos = (_pathPoints.isNotEmpty)
         ? _pathPoints.last
         : (_position ?? _defaultPosition);
