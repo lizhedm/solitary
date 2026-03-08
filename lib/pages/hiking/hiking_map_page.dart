@@ -135,69 +135,142 @@ class _HikingMapPageState extends State<HikingMapPage>
     }
   }
 
-  void _updateMapMarkers() {
-    final Set<Marker> newMarkers = Set.from(_markers);
-    
-    // Remove old nearby markers (identified by ID prefix or type)
-    // Since we don't have types, we can clear all except start/end/current
-    // Better: rebuild markers from scratch based on current state
-    
-    // But we need to preserve start/end/current.
-    // Let's identify nearby markers by a specific anchor or ID convention if possible.
-    // Or just clear markers that are NOT current/start/end.
-    
-    newMarkers.removeWhere((m) => 
-      m.anchor == const Offset(0.5, 1.0) // Assume nearby markers use bottom-center anchor
-    );
+  // 缓存头像标记，避免重复生成
+  final Map<int, BitmapDescriptor> _avatarCache = {};
+  // 缓存当前的周围用户标记，用于持久显示
+  final Map<int, Marker> _nearbyMarkersCache = {};
 
+  void _updateMapMarkers() async {
+    // 1. 获取所有非周围用户的标记（Start, End, Current User等）
+    // 我们可以假设所有 zIndex != 90 的标记都是非周围用户标记
+    final nonNearbyMarkers = _markers.where((m) => m.zIndex != 90).toSet();
+    
+    // 2. 更新周围用户标记缓存
+    // 获取当前接口返回的所有用户ID集合
+    final Set<int> currentUserIds = _nearbyHikers.map<int>((u) => u['id'] as int).toSet();
+    
+    // 移除已经不在附近的标记
+    _nearbyMarkersCache.removeWhere((id, marker) => !currentUserIds.contains(id));
+
+    // 更新或添加新的标记
     for (var user in _nearbyHikers) {
-      // Create marker for nearby user
-      // We need a way to create markers asynchronously or load them. 
-      // For now, let's use a simple method. 
-      // Ideally we should cache marker icons.
+      final int userId = user['id'];
+      final LatLng position = LatLng(user['lat'], user['lng']);
       
-      _createNearbyMarker(user).then((marker) {
-        if (mounted) {
-          setState(() {
-            _markers.add(marker);
-          });
+      // 尝试从头像缓存获取图标
+      BitmapDescriptor? icon = _avatarCache[userId];
+      
+      // 如果没有图标缓存，且当前标记缓存中也没有该用户的标记（说明是新出现的）
+      // 或者虽然有标记但没有图标（极端情况），则加载图标
+      if (icon == null) {
+        // 先检查是否有旧的标记可以使用（避免图标加载期间闪烁）
+        if (_nearbyMarkersCache.containsKey(userId)) {
+           icon = _nearbyMarkersCache[userId]!.icon;
+        } else {
+           // 如果完全是新的，先用默认图标占位
+           final bytes = await _createAvatarMarkerBytes(
+              user['nickname']?.substring(0, 1).toUpperCase() ?? '?', 
+              size: 64, 
+              color: Colors.blue
+           );
+           icon = BitmapDescriptor.fromBytes(bytes);
+           
+           // 异步加载真实头像
+           _loadMarkerIcon(user).then((loadedIcon) {
+              if (mounted && loadedIcon != null) {
+                setState(() {
+                  _avatarCache[userId] = loadedIcon;
+                  // 图标加载完成后，更新缓存中的标记并触发刷新
+                  if (_nearbyMarkersCache.containsKey(userId)) {
+                     final oldMarker = _nearbyMarkersCache[userId]!;
+                     _nearbyMarkersCache[userId] = Marker(
+                        position: oldMarker.position, // 保持位置不变
+                        icon: loadedIcon,
+                        anchor: const Offset(0.5, 0.5),
+                        infoWindow: InfoWindow(title: user['nickname']),
+                        zIndex: 90,
+                     );
+                     // 触发UI刷新
+                     setState(() {
+                        _markers = {...nonNearbyMarkers, ..._nearbyMarkersCache.values};
+                     });
+                  }
+                });
+              }
+           });
         }
+      }
+
+      // 更新位置和图标
+      _nearbyMarkersCache[userId] = Marker(
+        position: position,
+        icon: icon, // 这里使用 icon (可能是默认的，也可能是缓存的真实头像)
+        anchor: const Offset(0.5, 0.5),
+        infoWindow: InfoWindow(title: user['nickname']),
+        zIndex: 90,
+      );
+    }
+
+    if (mounted) {
+      setState(() {
+        // 合并 非周围用户标记 和 最新的周围用户标记
+        _markers = {...nonNearbyMarkers, ..._nearbyMarkersCache.values};
       });
     }
   }
 
-  Future<Marker> _createNearbyMarker(dynamic user) async {
-    // Simple marker for now
-    // In real app, download avatar and crop.
-    // Re-use _createAvatarMarkerBytes logic but with user's avatar
-    
-    BitmapDescriptor icon;
-    if (user['avatar'] != null) {
-        // ... logic to load avatar ...
-        // For simplicity/speed in this turn, use default or simple color
-        // Let's use a different color for others
-        final bytes = await _createAvatarMarkerBytes(
-            user['nickname']?.substring(0, 1).toUpperCase() ?? '?', 
-            size: 64,
-            color: Colors.blue
-        );
-        icon = BitmapDescriptor.fromBytes(bytes);
-    } else {
-        final bytes = await _createAvatarMarkerBytes(
-            user['nickname']?.substring(0, 1).toUpperCase() ?? '?', 
-            size: 64, 
-            color: Colors.blue
-        );
-        icon = BitmapDescriptor.fromBytes(bytes);
+  Future<BitmapDescriptor?> _loadMarkerIcon(dynamic user) async {
+    try {
+        if (user['avatar'] != null && user['avatar'].toString().isNotEmpty) {
+            String avatarUrl = user['avatar'];
+            if (!avatarUrl.startsWith('http')) {
+               avatarUrl = 'http://114.55.148.245:8000$avatarUrl';
+            }
+            final bytes = await _downloadAndCropAvatar(
+                avatarUrl, 
+                size: 64, 
+                color: Colors.blue
+            );
+            return BitmapDescriptor.fromBytes(bytes);
+        } else {
+            final bytes = await _createAvatarMarkerBytes(
+                user['nickname']?.substring(0, 1).toUpperCase() ?? '?', 
+                size: 64, 
+                color: Colors.blue
+            );
+            return BitmapDescriptor.fromBytes(bytes);
+        }
+    } catch (e) {
+        return null;
     }
-
-    return Marker(
-      position: LatLng(user['lat'], user['lng']),
-      icon: icon,
-      anchor: const Offset(0.5, 0.5),
-      infoWindow: InfoWindow(title: user['nickname']),
-    );
   }
+
+  Future<Marker> _createNearbyMarker(dynamic user) async {
+      // Deprecated, kept for interface compatibility if needed, but not used.
+      return Marker(
+         position: LatLng(user['lat'], user['lng']),
+      );
+  }
+
+  /// 下载并裁剪网络头像
+  Future<Uint8List> _downloadAndCropAvatar(
+    String url, {
+    int size = 128,
+    Color color = const Color(0xFF2E7D32),
+  }) async {
+    try {
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 5));
+      if (response.statusCode == 200) {
+        return await _avatarCircleBytesFromBytes(response.bodyBytes, size: size, borderColor: color);
+      }
+    } catch (e) {
+      debugPrint('Download avatar error: $e');
+    }
+    // Return a default if failed, but we should handle exception above
+    throw Exception('Failed to download image');
+  }
+  
+
 
 
 
@@ -517,9 +590,10 @@ class _HikingMapPageState extends State<HikingMapPage>
       }
       if (mounted) {
         setState(() {
-          // 移除现有的头像标记（通过anchor识别）
+          // 仅移除当前用户的标记（通过zIndex=100识别）
+          // 之前的逻辑是根据anchor移除，这会错误地移除周围用户（也是0.5,0.5）
           _markers.removeWhere(
-            (marker) => marker.anchor == const Offset(0.5, 0.5),
+            (marker) => marker.zIndex == 100,
           );
           // 添加新的头像标记
           _markers.add(
@@ -527,7 +601,7 @@ class _HikingMapPageState extends State<HikingMapPage>
               position: position,
               icon: descriptor!,
               anchor: const Offset(0.5, 0.5),
-              zIndex: 100,
+              zIndex: 100, // 当前用户标记具有最高层级
             ),
           );
         });
@@ -569,15 +643,18 @@ class _HikingMapPageState extends State<HikingMapPage>
     }
   }
 
-  /// 将图片字节转换为圆形标记图标的字节流（64x64）
-  Future<Uint8List> _avatarCircleBytesFromBytes(Uint8List imageBytes) async {
+  /// 将图片字节转换为圆形标记图标的字节流（支持自定义边框颜色）
+  Future<Uint8List> _avatarCircleBytesFromBytes(
+      Uint8List imageBytes, {
+      int size = 64, 
+      Color borderColor = const Color(0xFF2E7D32)
+  }) async {
     final Completer<ui.Image> completer = Completer();
     ui.decodeImageFromList(imageBytes, (ui.Image img) {
       completer.complete(img);
     });
     final ui.Image avatarImage = await completer.future;
 
-    final int size = 64;
     final double centerX = size / 2.0;
     final double centerY = size / 2.0;
     final Offset center = Offset(centerX, centerY);
@@ -585,25 +662,40 @@ class _HikingMapPageState extends State<HikingMapPage>
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
 
-    // 1) 内部头像圆圈，带一个外部绿色圆环（环宽 4px，内半径 28，外半径 30）
+    // 1) 内部头像圆圈，带一个外部圆环
     final ringPaint = Paint()
-      ..color = const Color(0xFF2E7D32)
+      ..color = borderColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = 4.0;
-    // 外环半径 30
-    canvas.drawCircle(Offset(centerX, centerY), 30.0, ringPaint);
+    // 外环半径 slightly smaller than half size to fit stroke
+    final double radius = (size / 2.0) - 2.0;
+    canvas.drawCircle(Offset(centerX, centerY), radius, ringPaint);
 
     // 2) 在同一画布内裁剪一个圆形区域，绘制头像
+    final double innerRadius = radius - 2.0;
     final clipPath = Path()
-      ..addOval(Rect.fromCircle(center: center, radius: 28.0));
+      ..addOval(Rect.fromCircle(center: center, radius: innerRadius));
     canvas.clipPath(clipPath);
-    final Rect src = Rect.fromLTWH(
-      0,
-      0,
-      avatarImage.width.toDouble(),
-      avatarImage.height.toDouble(),
+    
+    // Scale image to cover
+    // Calculate scale to cover the circle
+    final double scale = math.max(
+        (size.toDouble()) / avatarImage.width,
+        (size.toDouble()) / avatarImage.height
     );
-    final Rect dst = Rect.fromCircle(center: center, radius: 28.0);
+    
+    final double scaledWidth = avatarImage.width * scale;
+    final double scaledHeight = avatarImage.height * scale;
+    
+    // Center crop
+    final Rect src = Rect.fromLTWH(0, 0, avatarImage.width.toDouble(), avatarImage.height.toDouble());
+    final Rect dst = Rect.fromLTWH(
+        centerX - scaledWidth / 2, 
+        centerY - scaledHeight / 2, 
+        scaledWidth, 
+        scaledHeight
+    );
+    
     canvas.drawImageRect(avatarImage, src, dst, Paint());
 
     final ui.Picture picture = recorder.endRecording();
