@@ -33,8 +33,8 @@ app.add_middleware(
 # Create tables
 database.Base.metadata.create_all(bind=database.engine)
 
-app.include_router(auth.router)
-app.include_router(hiking.router)
+app.include_router(auth.router, tags=["auth"])
+app.include_router(hiking.router, tags=["hiking"])
 app.include_router(message_router.router)
 app.include_router(friends.router)
 

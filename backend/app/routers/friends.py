@@ -8,7 +8,9 @@ from app.routers.auth import get_current_user
 from pydantic import BaseModel
 import time
 
-router = APIRouter()
+router = APIRouter(
+    tags=["friends"]
+)
 
 class UserOut(BaseModel):
     id: int

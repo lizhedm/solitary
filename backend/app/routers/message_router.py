@@ -8,7 +8,10 @@ from app.models.user import User
 from pydantic import BaseModel
 import time
 
-router = APIRouter()
+# Create router with prefix and tags
+router = APIRouter(
+    tags=["messages"]
+)
 
 # --- Message Models ---
 
