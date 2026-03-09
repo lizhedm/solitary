@@ -22,7 +22,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -73,11 +73,42 @@ class DatabaseHelper {
         sync_status INTEGER DEFAULT 0 
       )
     ''');
-    // sync_status: 0 = synced, 1 = pending upload
+    
+    await _createMessageTables(db);
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // Handle migrations
+    if (oldVersion < 2) {
+      await _createMessageTables(db);
+    }
+  }
+  
+  Future<void> _createMessageTables(Database db) async {
+    // Messages Table
+    await db.execute('''
+      CREATE TABLE messages(
+        local_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        remote_id INTEGER UNIQUE,
+        sender_id INTEGER,
+        receiver_id INTEGER,
+        content TEXT,
+        type TEXT,
+        timestamp INTEGER,
+        is_read INTEGER DEFAULT 0,
+        hike_id INTEGER,
+        sync_status INTEGER DEFAULT 0
+      )
+    ''');
+    
+    // Contacts/Friends Table
+    await db.execute('''
+      CREATE TABLE contacts(
+        id INTEGER PRIMARY KEY, 
+        nickname TEXT,
+        avatar TEXT,
+        updated_at INTEGER
+      )
+    ''');
   }
 
   // --- User Helper Methods ---
@@ -142,5 +173,67 @@ class DatabaseHelper {
   Future<void> deleteHikingRecords(int userId) async {
     final db = await database;
     await db.delete('hiking_records', where: 'user_id = ?', whereArgs: [userId]);
+  }
+
+  // --- Message Helper Methods ---
+
+  Future<int> saveMessage(Map<String, dynamic> message) async {
+    final db = await database;
+    return await db.insert(
+      'messages',
+      message,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getMessages(int partnerId, int currentUserId) async {
+    final db = await database;
+    return await db.query(
+      'messages',
+      where: '((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))',
+      whereArgs: [currentUserId, partnerId, partnerId, currentUserId],
+      orderBy: 'timestamp ASC',
+    );
+  }
+  
+  Future<Map<String, dynamic>?> getLastMessage(int partnerId, int currentUserId) async {
+    final db = await database;
+    final res = await db.query(
+      'messages',
+      where: '((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))',
+      whereArgs: [currentUserId, partnerId, partnerId, currentUserId],
+      orderBy: 'timestamp DESC',
+      limit: 1
+    );
+    return res.isNotEmpty ? res.first : null;
+  }
+  
+  Future<int> getUnreadCount(int partnerId, int currentUserId) async {
+    final db = await database;
+    final res = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM messages WHERE sender_id = ? AND receiver_id = ? AND is_read = 0',
+      [partnerId, currentUserId]
+    );
+    return Sqflite.firstIntValue(res) ?? 0;
+  }
+
+  Future<void> saveContact(Map<String, dynamic> contact) async {
+    final db = await database;
+    await db.insert(
+      'contacts',
+      contact,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+  
+  Future<List<Map<String, dynamic>>> getContacts() async {
+    final db = await database;
+    return await db.query('contacts');
+  }
+  
+  Future<Map<String, dynamic>?> getContact(int id) async {
+    final db = await database;
+    final res = await db.query('contacts', where: 'id = ?', whereArgs: [id]);
+    return res.isNotEmpty ? res.first : null;
   }
 }

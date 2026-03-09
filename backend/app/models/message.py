@@ -12,6 +12,7 @@ class Message(Base):
     content = Column(String)
     type = Column(String) # 'text', 'image', 'sos', 'feedback', 'question'
     timestamp = Column(BigInteger)
+    is_read = Column(Boolean, default=False)
     
     hike_id = Column(Integer, ForeignKey("hiking_records.id"), nullable=True)
     

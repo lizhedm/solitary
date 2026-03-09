@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/auth_provider.dart';
+import 'package:solitary/providers/message_provider.dart';
 import 'pages/auth/login_page.dart';
 import 'main_screen.dart';
 import 'package:solitary/services/api_service.dart';
@@ -46,6 +47,7 @@ class SolitaryApp extends StatelessWidget {
       providers: [
         // 创建AuthProvider用于管理用户认证状态
         ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider(create: (_) => MessageProvider()),
       ],
       child: MaterialApp(
         title: 'Solitary',

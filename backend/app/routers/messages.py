@@ -1,13 +1,40 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from typing import List
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session, aliased
+from typing import List, Optional
 from app.database.database import get_db
 from app.models.message import Feedback, Message
 from app.routers.auth import get_current_user
 from app.models.user import User
 from pydantic import BaseModel
+import time
 
 router = APIRouter()
+
+# --- Message Models ---
+
+class MessageCreate(BaseModel):
+    receiver_id: int
+    content: str
+    type: str = "text" # text, image, sos
+    hike_id: Optional[int] = None
+
+class MessageOut(BaseModel):
+    id: int
+    sender_id: int
+    receiver_id: Optional[int]
+    content: str
+    type: str
+    timestamp: int
+    is_read: bool
+    hike_id: Optional[int]
+    
+    class Config:
+        from_attributes = True
+
+class MarkReadRequest(BaseModel):
+    message_ids: List[int]
+
+# --- Feedback Models ---
 
 class FeedbackCreate(BaseModel):
     type: str
@@ -27,7 +54,122 @@ class FeedbackOut(FeedbackCreate):
     class Config:
         from_attributes = True
 
-@router.post("/messages/feedback", response_model=FeedbackOut)
+# --- Message Endpoints ---
+
+@router.post("/messages", response_model=MessageOut)
+def send_message(
+    msg: MessageCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Verify receiver exists
+    receiver = db.query(User).filter(User.id == msg.receiver_id).first()
+    if not receiver:
+        raise HTTPException(status_code=404, detail="Receiver not found")
+        
+    db_msg = Message(
+        sender_id=current_user.id,
+        receiver_id=msg.receiver_id,
+        content=msg.content,
+        type=msg.type,
+        timestamp=int(time.time() * 1000),
+        is_read=False,
+        hike_id=msg.hike_id
+    )
+    db.add(db_msg)
+    db.commit()
+    db.refresh(db_msg)
+    return db_msg
+
+@router.get("/messages", response_model=List[MessageOut])
+def get_messages(
+    since: Optional[int] = None,
+    partner_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    query = db.query(Message).filter(
+        (Message.sender_id == current_user.id) | (Message.receiver_id == current_user.id)
+    )
+    
+    if partner_id:
+        query = query.filter(
+            ((Message.sender_id == current_user.id) & (Message.receiver_id == partner_id)) |
+            ((Message.sender_id == partner_id) & (Message.receiver_id == current_user.id))
+        )
+        
+    if since:
+        query = query.filter(Message.timestamp > since)
+        
+    return query.order_by(Message.timestamp.asc()).all()
+
+@router.get("/messages/conversations")
+def get_conversations(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Get last message for each conversation
+    # This is a bit complex in pure SQL, simpler to fetch recent messages and aggregate in python for MVP
+    # Or find all unique partners
+    
+    sent_to = db.query(Message.receiver_id).filter(Message.sender_id == current_user.id).distinct()
+    received_from = db.query(Message.sender_id).filter(Message.receiver_id == current_user.id).distinct()
+    
+    partner_ids = set()
+    for (pid,) in sent_to:
+        if pid: partner_ids.add(pid)
+    for (pid,) in received_from:
+        if pid: partner_ids.add(pid)
+        
+    conversations = []
+    for pid in partner_ids:
+        partner = db.query(User).filter(User.id == pid).first()
+        if not partner: continue
+        
+        last_msg = db.query(Message).filter(
+            ((Message.sender_id == current_user.id) & (Message.receiver_id == pid)) |
+            ((Message.sender_id == pid) & (Message.receiver_id == current_user.id))
+        ).order_by(Message.timestamp.desc()).first()
+        
+        unread_count = db.query(Message).filter(
+            Message.sender_id == pid,
+            Message.receiver_id == current_user.id,
+            Message.is_read == False
+        ).count()
+        
+        conversations.append({
+            "partner": {
+                "id": partner.id,
+                "nickname": partner.nickname,
+                "avatar": partner.avatar
+            },
+            "last_message": {
+                "content": last_msg.content,
+                "type": last_msg.type,
+                "timestamp": last_msg.timestamp
+            } if last_msg else None,
+            "unread_count": unread_count
+        })
+        
+    # Sort by last message timestamp
+    conversations.sort(key=lambda x: x["last_message"]["timestamp"] if x["last_message"] else 0, reverse=True)
+    return conversations
+
+@router.post("/messages/mark-read")
+def mark_messages_read(
+    req: MarkReadRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    db.query(Message).filter(
+        Message.id.in_(req.message_ids),
+        Message.receiver_id == current_user.id
+    ).update({"is_read": True}, synchronize_session=False)
+    db.commit()
+    return {"success": True}
+
+# --- Feedback Endpoints ---
+
 def create_feedback(
     feedback: FeedbackCreate, 
     db: Session = Depends(get_db), 

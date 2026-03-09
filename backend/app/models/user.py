@@ -30,3 +30,4 @@ class User(Base):
     
     hikes = relationship("HikingRecord", back_populates="user")
     feedbacks = relationship("Feedback", back_populates="user")
+    friends = relationship("Friendship", foreign_keys="[Friendship.user_id]", back_populates="user")

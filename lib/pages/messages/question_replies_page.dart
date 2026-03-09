@@ -84,6 +84,7 @@ class QuestionRepliesPage extends StatelessWidget {
                         builder: (context) => ChatPage(
                           title: user['name'] as String,
                           avatar: user['avatar'] as String,
+                          partnerId: 0, // Placeholder
                         ),
                       ),
                     );
