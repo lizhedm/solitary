@@ -18,7 +18,10 @@ class MessageProvider with ChangeNotifier {
   void startPolling(int currentUserId) {
     stopPolling();
     // Poll every 5 seconds
-    _pollingTimer = Timer.periodic(const Duration(seconds: 5), (_) => fetchNewMessages(currentUserId));
+    _pollingTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      fetchNewMessages(currentUserId);
+      fetchContacts(currentUserId);
+    });
     // Initial fetch
     fetchNewMessages(currentUserId);
     fetchContacts(currentUserId);

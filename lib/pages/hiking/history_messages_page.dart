@@ -51,6 +51,7 @@ class HistoryMessagesPage extends StatelessWidget {
                         builder: (context) => ChatPage(
                           title: p['name'] as String,
                           avatar: p['avatar'] as String,
+                          partnerId: int.tryParse(p['id'] as String) ?? 0,
                         ),
                       ),
                     );

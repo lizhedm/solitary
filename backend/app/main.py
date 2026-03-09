@@ -46,13 +46,43 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 @app.on_event("startup")
 def startup_event():
-    # Initialize friendships for testing
+    # Initialize users and friendships for testing
     db = SessionLocal()
     try:
+        # Create user1 if not exists
         user1 = db.query(User).filter(User.username == "user1").first()
+        if not user1:
+            print("Creating user1")
+            hashed_pwd = auth.get_password_hash("password")
+            user1 = User(
+                username="user1",
+                email="user1@example.com",
+                nickname="User One",
+                hashed_password=hashed_pwd,
+                is_active=True
+            )
+            db.add(user1)
+            db.commit()
+            db.refresh(user1)
+
+        # Create user2 if not exists
         user2 = db.query(User).filter(User.username == "user2").first()
-        
+        if not user2:
+            print("Creating user2")
+            hashed_pwd = auth.get_password_hash("password")
+            user2 = User(
+                username="user2",
+                email="user2@example.com",
+                nickname="User Two",
+                hashed_password=hashed_pwd,
+                is_active=True
+            )
+            db.add(user2)
+            db.commit()
+            db.refresh(user2)
+            
         if user1 and user2:
+            # Check friendship
             exists = db.query(Friendship).filter(
                 ((Friendship.user_id == user1.id) & (Friendship.friend_id == user2.id)) |
                 ((Friendship.user_id == user2.id) & (Friendship.friend_id == user1.id))
@@ -60,9 +90,16 @@ def startup_event():
             
             if not exists:
                 print("Creating friendship between user1 and user2")
-                f = Friendship(user_id=user1.id, friend_id=user2.id, status="ACCEPTED", created_at=int(time.time()*1000))
+                f = Friendship(
+                    user_id=user1.id, 
+                    friend_id=user2.id, 
+                    status="ACCEPTED", 
+                    created_at=int(time.time()*1000)
+                )
                 db.add(f)
                 db.commit()
+    except Exception as e:
+        print(f"Error in startup event: {e}")
     finally:
         db.close()
 
