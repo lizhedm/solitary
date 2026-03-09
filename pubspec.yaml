@@ -52,6 +52,9 @@ dependencies:
     path: packages/amap_flutter_map
   amap_flutter_base:
     path: packages/amap_flutter_base
+  sqflite: ^2.4.2
+  path: ^1.9.1
+  cached_network_image: ^3.4.1
 
 dev_dependencies:
   flutter_test:

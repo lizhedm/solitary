@@ -20,6 +20,7 @@ import 'sos_button.dart';
 import 'route_feedback_page.dart';
 import 'ask_question_page.dart';
 import 'hiking_history_page.dart';
+import '../../services/database_helper.dart';
 import '../../services/location_manager.dart';
 
 /// HikingMapPage - 徒步地图页面
@@ -1397,12 +1398,36 @@ class _HikingMapPageState extends State<HikingMapPage>
     );
     
     // 5. 保存记录
+    int? localRecordId;
+    final localRecordMap = record.toJson();
+    
     try {
-      await ApiService().post('/hiking-records', data: record.toJson());
+      // 5.1 先保存到本地数据库
+      localRecordMap.remove('id'); // 移除空ID，使用自增ID
+      localRecordMap['sync_status'] = 1; // 标记为待上传
+      localRecordId = await DatabaseHelper().saveHikingRecord(localRecordMap);
+      
+      // 5.2 上传到服务器
+      final response = await ApiService().post('/hiking-records', data: record.toJson());
+      
+      if (response.statusCode == 200) {
+         // 5.3 更新本地记录状态为已同步
+         final remoteRecord = HikingRecord.fromJson(response.data);
+         localRecordMap['remote_id'] = int.tryParse(remoteRecord.id);
+         localRecordMap['sync_status'] = 0; // 已同步
+         localRecordMap['local_id'] = localRecordId; // 更新指定记录
+         
+         await DatabaseHelper().saveHikingRecord(localRecordMap);
+      }
     } catch (e) {
       debugPrint('Save hiking record failed: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('保存记录失败: $e')));
+        if (localRecordId == null) {
+           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('保存记录失败: $e')));
+        } else {
+           // 即使上传失败，本地已保存，不阻塞用户体验
+           // ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('记录已保存到本地')));
+        }
       }
     }
 

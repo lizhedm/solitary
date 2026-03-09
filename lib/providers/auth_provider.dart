@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import '../models/user.dart';
 import '../services/api_service.dart';
+import '../services/database_helper.dart';
 
 /// AuthProvider - 认证状态管理类
 /// 使用ChangeNotifier管理用户登录状态和用户信息
@@ -79,11 +80,22 @@ class AuthProvider with ChangeNotifier {
       final response = await _apiService.get('/users/me');
       _user = User.fromJson(response.data);
       _avatarVersion++;
+      
+      // Update Local DB
+      await DatabaseHelper().saveUser(_user!.toJson());
+      
       notifyListeners();
     } catch (e) {
       print('Fetch user error: $e');
-      // Token可能已失效，执行登出
-      logout();
+      // If error is 401, logout
+      if (e is DioException && e.response?.statusCode == 401) {
+         logout();
+      } else {
+         // Other errors (network), keep local user data if available
+         if (_user == null) {
+            logout();
+         }
+      }
     }
   }
 
@@ -124,6 +136,10 @@ class AuthProvider with ChangeNotifier {
     _user = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('token');
+    
+    // Clear Local DB
+    await DatabaseHelper().clearUser();
+    
     notifyListeners();
   }
 
@@ -155,6 +171,9 @@ class AuthProvider with ChangeNotifier {
           avatar: avatar ?? _user!.avatar,
         );
         _avatarVersion++;
+        
+        // Save to Local DB
+        await DatabaseHelper().saveUser(_user!.toJson());
       }
 
       notifyListeners();
@@ -231,6 +250,10 @@ class AuthProvider with ChangeNotifier {
       // 更新本地用户信息
       if (_user != null && avatarUrl != null) {
         _user = _user!.copyWith(avatar: avatarUrl);
+        
+        // Save to Local DB
+        await DatabaseHelper().saveUser(_user!.toJson());
+        
         notifyListeners();
       }
 
@@ -252,6 +275,18 @@ class AuthProvider with ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     _token = prefs.getString('token');
     if (_token != null) {
+      // 1. Load from Local DB first for immediate UI
+      final localUserData = await DatabaseHelper().getCurrentUser();
+      if (localUserData != null) {
+        try {
+          _user = User.fromJson(localUserData);
+          notifyListeners();
+        } catch (e) {
+          print('Error loading user from local DB: $e');
+        }
+      }
+      
+      // 2. Fetch from API to update
       // 如果有token，验证并获取用户信息
       await fetchUserProfile();
     }

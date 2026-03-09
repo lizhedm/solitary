@@ -7,6 +7,9 @@ import 'history_messages_page.dart';
 import 'dart:convert';
 import 'package:amap_flutter_map/amap_flutter_map.dart';
 import 'package:amap_flutter_base/amap_flutter_base.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+
+import '../../services/database_helper.dart';
 
 class HikingHistoryPage extends StatefulWidget {
   const HikingHistoryPage({super.key});
@@ -32,23 +35,71 @@ class _HikingHistoryPageState extends State<HikingHistoryPage> {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final userId = authProvider.user?.id ?? 0;
 
+    // 1. Load from Local DB first
+    try {
+      final localRecords = await DatabaseHelper().getHikingRecords(userId);
+      if (localRecords.isNotEmpty) {
+         if (mounted) {
+           setState(() {
+              _records = localRecords.map((json) {
+                 final Map<String, dynamic> map = Map.from(json);
+                 // Prefer remote_id, fallback to local_id
+                 map['id'] = (json['remote_id'] ?? json['local_id']).toString();
+                 return HikingRecord.fromJson(map);
+              }).toList();
+              
+              _totalCount = _records.length;
+              _totalDistance = _records.fold(0.0, (sum, r) => sum + r.distance);
+              _totalElevationGain = _records.fold(0, (sum, r) => sum + r.elevationGain);
+              _isLoading = false;
+           });
+         }
+      }
+    } catch (e) {
+      debugPrint('Load local history failed: $e');
+    }
+
+    // 2. Fetch from API
     try {
       final response = await ApiService().get('/hiking-records', queryParameters: {'user_id': userId});
       if (response.statusCode == 200 && response.data != null) {
         final List<dynamic> data = response.data['records'] ?? [];
-        setState(() {
-          _records = data.map((json) => HikingRecord.fromJson(json)).toList();
-          _totalCount = response.data['total_count'] ?? _records.length;
-          _totalDistance = (response.data['total_distance'] as num?)?.toDouble() ?? 
-              _records.fold(0.0, (sum, r) => sum + r.distance);
-          _totalElevationGain = response.data['total_elevation_gain'] ?? 
-              _records.fold(0, (sum, r) => sum + r.elevationGain);
-          _isLoading = false;
-        });
+        
+        // Sync to Local DB
+        for (var json in data) {
+           try {
+             final record = HikingRecord.fromJson(json);
+             final localMap = record.toJson();
+             localMap['remote_id'] = int.tryParse(record.id);
+             localMap.remove('id');
+             localMap['sync_status'] = 0;
+             localMap['user_id'] = userId;
+             
+             await DatabaseHelper().saveHikingRecord(localMap);
+           } catch (e) {
+             debugPrint('Error syncing record: $e');
+           }
+        }
+        
+        if (mounted) {
+          setState(() {
+            _records = data.map((json) => HikingRecord.fromJson(json)).toList();
+            _totalCount = response.data['total_count'] ?? _records.length;
+            _totalDistance = (response.data['total_distance'] as num?)?.toDouble() ?? 
+                _records.fold(0.0, (sum, r) => sum + r.distance);
+            _totalElevationGain = response.data['total_elevation_gain'] ?? 
+                _records.fold(0, (sum, r) => sum + r.elevationGain);
+            _isLoading = false;
+          });
+        }
       }
     } catch (e) {
       debugPrint('Fetch hiking history failed: $e');
-      setState(() => _isLoading = false);
+      // Only set loading to false if we haven't loaded local data yet or local data is empty
+      // If we have local data, we keep showing it
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -146,12 +197,17 @@ class _HikingHistoryPageState extends State<HikingHistoryPage> {
                                     if (item.mapSnapshotUrl != null)
                                       ClipRRect(
                                         borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                                        child: Image.network(
-                                          _getCorrectedImageUrl(item.mapSnapshotUrl),
+                                        child: CachedNetworkImage(
+                                          imageUrl: _getCorrectedImageUrl(item.mapSnapshotUrl),
                                           height: 150,
                                           width: double.infinity,
                                           fit: BoxFit.cover,
-                                          errorBuilder: (context, error, stackTrace) => Container(
+                                          placeholder: (context, url) => Container(
+                                            height: 150,
+                                            color: Colors.grey[200],
+                                            child: const Center(child: CircularProgressIndicator()),
+                                          ),
+                                          errorWidget: (context, url, error) => Container(
                                             height: 150,
                                             color: Colors.grey[200],
                                             child: const Icon(Icons.map, color: Colors.grey),
@@ -300,9 +356,11 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
                   child: _showReplay 
                     ? _buildReplayMap()
                     : (record.mapSnapshotUrl != null 
-                        ? Image.network(
-                            _getCorrectedImageUrl(record.mapSnapshotUrl),
+                        ? CachedNetworkImage(
+                            imageUrl: _getCorrectedImageUrl(record.mapSnapshotUrl),
                             fit: BoxFit.cover,
+                            placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
+                            errorWidget: (context, url, error) => const Center(child: Icon(Icons.error)),
                           )
                         : Container(
                             color: Colors.grey[200],

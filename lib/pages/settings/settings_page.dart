@@ -3,6 +3,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:provider/provider.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../../providers/auth_provider.dart';
 import '../hiking/hiking_history_page.dart';
 import 'privacy_settings_page.dart';
@@ -263,14 +264,28 @@ class _SettingsPageState extends State<SettingsPage> {
                 GestureDetector(
                   onTap: () => _pickImageForAvatar(context),
                   child: (user?.avatar?.isNotEmpty ?? false)
-                      ? CircleAvatar(
-                          radius: 32,
-                          backgroundImage: NetworkImage(
-                            user!.avatar!.startsWith('http') 
-                                ? '${user.avatar!}?v=${authProvider.avatarVersion}'
-                                : 'http://114.55.148.245:8000${user.avatar!}?v=${authProvider.avatarVersion}',
+                      ? CachedNetworkImage(
+                          imageUrl: user!.avatar!.startsWith('http') 
+                              ? '${user.avatar!}?v=${authProvider.avatarVersion}'
+                              : 'http://114.55.148.245:8000${user.avatar!}?v=${authProvider.avatarVersion}',
+                          imageBuilder: (context, imageProvider) => CircleAvatar(
+                            radius: 32,
+                            backgroundImage: imageProvider,
+                            backgroundColor: const Color(0xFF2E7D32),
                           ),
-                          backgroundColor: const Color(0xFF2E7D32),
+                          placeholder: (context, url) => const CircleAvatar(
+                            radius: 32,
+                            backgroundColor: Color(0xFF2E7D32),
+                            child: CircularProgressIndicator(color: Colors.white),
+                          ),
+                          errorWidget: (context, url, error) => CircleAvatar(
+                            radius: 32,
+                            backgroundColor: const Color(0xFF2E7D32),
+                            child: Text(
+                              user?.nickname?.substring(0, 1).toUpperCase() ?? 'U',
+                              style: const TextStyle(fontSize: 24, color: Colors.white),
+                            ),
+                          ),
                         )
                       : CircleAvatar(
                           radius: 32,
