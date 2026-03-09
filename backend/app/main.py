@@ -12,7 +12,7 @@ if not hasattr(bcrypt, '__about__'):
         __version__ = getattr(bcrypt, '__version__', '4.1.2')
     bcrypt.__about__ = AboutModule()
 
-from app.routers import auth, hiking, message_router, friends
+from app.routers import auth, hiking, messages, friends
 from app.database import database
 # 显式导入所有模型，确保 create_all 能正确创建表
 from app.models import User, HikingRecord, Message, Feedback, Friendship
@@ -35,7 +35,7 @@ database.Base.metadata.create_all(bind=database.engine)
 
 app.include_router(auth.router, tags=["auth"])
 app.include_router(hiking.router, tags=["hiking"])
-app.include_router(message_router.router)
+app.include_router(messages.router)
 app.include_router(friends.router)
 
 # 创建上传目录（如果不存在）
