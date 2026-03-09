@@ -35,8 +35,8 @@ database.Base.metadata.create_all(bind=database.engine)
 
 app.include_router(auth.router, tags=["auth"])
 app.include_router(hiking.router, tags=["hiking"])
-app.include_router(messages.router)
-app.include_router(friends.router)
+app.include_router(messages.router, tags=["messages"])
+app.include_router(friends.router, tags=["friends"])
 
 # 创建上传目录（如果不存在）
 os.makedirs("uploads/avatars", exist_ok=True)
