@@ -105,7 +105,19 @@ class _HikingMapPageState extends State<HikingMapPage>
   // 筛选条件
   int _feedbackDays = 3; // 默认最近3天
   int _minConfirms = 0; // 默认不过滤点赞数
-  
+  // 路况类型筛选（默认全选）
+  final List<Map<String, dynamic>> _feedbackTypeOptions = [
+    {'id': 'blocked', 'icon': Icons.block, 'label': '道路阻断', 'color': Colors.red},
+    {'id': 'detour', 'icon': Icons.alt_route, 'label': '建议绕行', 'color': Colors.orange},
+    {'id': 'weather', 'icon': Icons.cloud, 'label': '天气变化', 'color': Colors.blue},
+    {'id': 'water', 'icon': Icons.water_drop, 'label': '水源位置', 'color': Colors.cyan},
+    {'id': 'campsite', 'icon': Icons.nights_stay, 'label': '推荐营地', 'color': Colors.green},
+    {'id': 'danger', 'icon': Icons.warning, 'label': '危险区域', 'color': Colors.deepOrange},
+    {'id': 'supply', 'icon': Icons.store, 'label': '有补给点', 'color': Colors.purple},
+    {'id': 'other', 'icon': Icons.more_horiz, 'label': '其他信息', 'color': Colors.grey},
+  ];
+  late Set<String> _selectedFeedbackTypes;
+
   // 是否已加载初始数据
   bool _initialDataLoaded = false;
 
@@ -116,6 +128,7 @@ class _HikingMapPageState extends State<HikingMapPage>
   @override
   void initState() {
     super.initState();
+    _selectedFeedbackTypes = Set.from(_feedbackTypeOptions.map((e) => e['id']));
     _checkDevice();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1190,8 +1203,12 @@ class _HikingMapPageState extends State<HikingMapPage>
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) => Container(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.8,
+          ),
           decoration: const BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -1204,94 +1221,156 @@ class _HikingMapPageState extends State<HikingMapPage>
               const Text('图层显示', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 16),
               
-              // 路况开关
-              SwitchListTile(
-                title: const Text('路况信息'),
-                secondary: const Icon(Icons.comment, color: Colors.blue),
-                value: _showFeedbacks,
-                onChanged: (val) {
-                  // Update local state (modal)
-                  setModalState(() => _showFeedbacks = val);
-                  // Update parent state (map page)
-                  this.setState(() {
-                    _showFeedbacks = val;
-                    _refreshMapMarkers();
-                  });
-                },
-              ),
-              
-              // 路况筛选（仅当路况开启时显示）
-              if (_showFeedbacks) ...[
-                const Padding(
-                  padding: EdgeInsets.only(left: 16, top: 8),
-                  child: Text('路况筛选', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('时间范围: '),
-                      DropdownButton<int>(
-                        value: _feedbackDays,
-                        items: const [
-                          DropdownMenuItem(value: 3, child: Text('最近3天')),
-                          DropdownMenuItem(value: 7, child: Text('最近7天')),
-                          DropdownMenuItem(value: 30, child: Text('最近30天')),
-                        ],
+                      // 路况开关
+                      SwitchListTile(
+                        title: const Text('路况信息'),
+                        secondary: const Icon(Icons.comment, color: Colors.blue),
+                        value: _showFeedbacks,
                         onChanged: (val) {
-                          if (val != null) {
-                            setModalState(() => _feedbackDays = val);
-                            this.setState(() {
-                              _feedbackDays = val;
-                              _refreshMapMarkers();
-                            });
-                          }
+                          // Update local state (modal)
+                          setModalState(() => _showFeedbacks = val);
+                          // Update parent state (map page)
+                          this.setState(() {
+                            _showFeedbacks = val;
+                            _refreshMapMarkers();
+                          });
+                        },
+                      ),
+                      
+                      // 路况筛选（仅当路况开启时显示）
+                      if (_showFeedbacks) ...[
+                        const Padding(
+                          padding: EdgeInsets.only(left: 16, top: 8),
+                          child: Text('路况筛选', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Row(
+                            children: [
+                              const Text('时间范围: '),
+                              DropdownButton<int>(
+                                value: _feedbackDays,
+                                items: const [
+                                  DropdownMenuItem(value: 3, child: Text('最近3天')),
+                                  DropdownMenuItem(value: 7, child: Text('最近7天')),
+                                  DropdownMenuItem(value: 30, child: Text('最近30天')),
+                                ],
+                                onChanged: (val) {
+                                  if (val != null) {
+                                    setModalState(() => _feedbackDays = val);
+                                    this.setState(() {
+                                      _feedbackDays = val;
+                                      _refreshMapMarkers();
+                                    });
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Row(
+                            children: [
+                              const Text('最少确认: '),
+                              DropdownButton<int>(
+                                value: _minConfirms,
+                                items: const [
+                                  DropdownMenuItem(value: 0, child: Text('不限')),
+                                  DropdownMenuItem(value: 5, child: Text('5+')),
+                                  DropdownMenuItem(value: 10, child: Text('10+')),
+                                ],
+                                onChanged: (val) {
+                                  if (val != null) {
+                                    setModalState(() => _minConfirms = val);
+                                    this.setState(() {
+                                      _minConfirms = val;
+                                      _refreshMapMarkers();
+                                    });
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Padding(
+                          padding: EdgeInsets.only(left: 16, top: 8, bottom: 4),
+                          child: Text('路况类型:', style: TextStyle(fontSize: 14)),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Wrap(
+                            spacing: 8.0,
+                            runSpacing: 8.0,
+                            children: _feedbackTypeOptions.map((type) {
+                              final id = type['id'] as String;
+                              final label = type['label'] as String;
+                              final icon = type['icon'] as IconData;
+                              final color = type['color'] as Color;
+                              final isSelected = _selectedFeedbackTypes.contains(id);
+
+                              return FilterChip(
+                                label: Text(label),
+                                avatar: Icon(
+                                  icon,
+                                  size: 18,
+                                  color: isSelected ? Colors.white : color,
+                                ),
+                                selected: isSelected,
+                                onSelected: (bool selected) {
+                                  setModalState(() {
+                                    if (selected) {
+                                      _selectedFeedbackTypes.add(id);
+                                    } else {
+                                      _selectedFeedbackTypes.remove(id);
+                                    }
+                                  });
+                                  this.setState(() {
+                                    // Sync state and refresh
+                                    if (selected) {
+                                       _selectedFeedbackTypes.add(id);
+                                    } else {
+                                       _selectedFeedbackTypes.remove(id);
+                                    }
+                                    _refreshMapMarkers();
+                                  });
+                                },
+                                selectedColor: color,
+                                labelStyle: TextStyle(
+                                  color: isSelected ? Colors.white : Colors.black,
+                                ),
+                                backgroundColor: Colors.white,
+                                side: BorderSide(color: color),
+                                checkmarkColor: Colors.white,
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                      ],
+                      
+                      const Divider(),
+                      
+                      // 求助开关
+                      SwitchListTile(
+                        title: const Text('求助信号'),
+                        secondary: const Icon(Icons.warning, color: Colors.red),
+                        value: _showSOS,
+                        onChanged: (val) {
+                          setModalState(() => _showSOS = val);
+                          this.setState(() {
+                            _showSOS = val;
+                            _refreshMapMarkers();
+                          });
                         },
                       ),
                     ],
                   ),
                 ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    children: [
-                      const Text('最少确认: '),
-                      DropdownButton<int>(
-                        value: _minConfirms,
-                        items: const [
-                          DropdownMenuItem(value: 0, child: Text('不限')),
-                          DropdownMenuItem(value: 5, child: Text('5+')),
-                          DropdownMenuItem(value: 10, child: Text('10+')),
-                        ],
-                        onChanged: (val) {
-                          if (val != null) {
-                            setModalState(() => _minConfirms = val);
-                            this.setState(() {
-                              _minConfirms = val;
-                              _refreshMapMarkers();
-                            });
-                          }
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-              
-              const Divider(),
-              
-              // 求助开关
-              SwitchListTile(
-                title: const Text('求助信号'),
-                secondary: const Icon(Icons.warning, color: Colors.red),
-                value: _showSOS,
-                onChanged: (val) {
-                  setModalState(() => _showSOS = val);
-                  this.setState(() {
-                    _showSOS = val;
-                    _refreshMapMarkers();
-                  });
-                },
               ),
             ],
           ),
@@ -1334,6 +1413,7 @@ class _HikingMapPageState extends State<HikingMapPage>
           'max_lng': maxLng,
           'days': _feedbackDays,
           'min_confirms': _minConfirms,
+          // Note: Backend filtering for types is not implemented yet, so we filter locally in _updateFeedbackMarkers
         });
         
         if (response.statusCode == 200) {
@@ -1381,13 +1461,23 @@ class _HikingMapPageState extends State<HikingMapPage>
         final lng = item['longitude'];
         final type = item['type'];
         
+        // Filter by selected types
+        if (!_selectedFeedbackTypes.contains(type)) {
+          continue;
+        }
+        
         // 根据类型选择图标颜色
         Color color = Colors.grey;
         IconData iconData = Icons.info;
-        if (type == 'blocked') { color = Colors.red; iconData = Icons.block; }
-        else if (type == 'weather') { color = Colors.blue; iconData = Icons.cloud; }
-        else if (type == 'supply') { color = Colors.purple; iconData = Icons.store; }
-        else if (type == 'danger') { color = Colors.deepOrange; iconData = Icons.warning; }
+        
+        // 从配置中查找对应的图标和颜色
+        final typeOption = _feedbackTypeOptions.firstWhere(
+          (element) => element['id'] == type,
+          orElse: () => {'color': Colors.grey, 'icon': Icons.info},
+        );
+        
+        color = typeOption['color'] as Color;
+        iconData = typeOption['icon'] as IconData;
         
         final iconBytes = await _createIconMarkerBytes(iconData, color);
         

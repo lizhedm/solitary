@@ -22,7 +22,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -133,6 +133,12 @@ class DatabaseHelper {
       } catch (e) {
         debugPrint('Error adding user_name column: $e');
       }
+    }
+    if (oldVersion < 5) {
+      // Add missing columns to hiking_records
+      try { await db.execute('ALTER TABLE hiking_records ADD COLUMN coordinates_json TEXT'); } catch (_) {}
+      try { await db.execute('ALTER TABLE hiking_records ADD COLUMN map_snapshot_url TEXT'); } catch (_) {}
+      try { await db.execute('ALTER TABLE hiking_records ADD COLUMN message_count INTEGER DEFAULT 0'); } catch (_) {}
     }
   }
   
