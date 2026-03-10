@@ -22,7 +22,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -74,12 +74,53 @@ class DatabaseHelper {
       )
     ''');
     
+    // Feedbacks Table
+    await db.execute('''
+      CREATE TABLE feedbacks(
+        local_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        remote_id INTEGER UNIQUE,
+        user_id INTEGER,
+        type TEXT,
+        content TEXT,
+        latitude REAL,
+        longitude REAL,
+        address TEXT,
+        photos TEXT,
+        created_at INTEGER,
+        status TEXT DEFAULT 'ACTIVE',
+        view_count INTEGER DEFAULT 0,
+        confirm_count INTEGER DEFAULT 0,
+        sync_status INTEGER DEFAULT 0
+      )
+    ''');
+    
     await _createMessageTables(db);
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
       await _createMessageTables(db);
+    }
+    if (oldVersion < 3) {
+      // Feedbacks Table
+      await db.execute('''
+        CREATE TABLE feedbacks(
+          local_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          remote_id INTEGER UNIQUE,
+          user_id INTEGER,
+          type TEXT,
+          content TEXT,
+          latitude REAL,
+          longitude REAL,
+          address TEXT,
+          photos TEXT,
+          created_at INTEGER,
+          status TEXT DEFAULT 'ACTIVE',
+          view_count INTEGER DEFAULT 0,
+          confirm_count INTEGER DEFAULT 0,
+          sync_status INTEGER DEFAULT 0
+        )
+      ''');
     }
   }
   
@@ -256,5 +297,31 @@ class DatabaseHelper {
     final db = await database;
     final res = await db.query('contacts', where: 'id = ?', whereArgs: [id]);
     return res.isNotEmpty ? res.first : null;
+  }
+  
+  // --- Feedback Helper Methods ---
+
+  Future<int> saveFeedback(Map<String, dynamic> feedback) async {
+    final db = await database;
+    return await db.insert(
+      'feedbacks',
+      feedback,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getFeedbacks(int userId) async {
+    final db = await database;
+    return await db.query(
+      'feedbacks',
+      where: 'user_id = ?',
+      whereArgs: [userId],
+      orderBy: 'created_at DESC',
+    );
+  }
+
+  Future<void> deleteFeedback(int localId) async {
+    final db = await database;
+    await db.delete('feedbacks', where: 'local_id = ?', whereArgs: [localId]);
   }
 }

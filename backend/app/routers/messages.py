@@ -7,6 +7,7 @@ from app.routers.auth import get_current_user
 from app.models.user import User
 from pydantic import BaseModel
 import time
+import json
 
 router = APIRouter()
 
@@ -42,6 +43,7 @@ class FeedbackCreate(BaseModel):
     latitude: float
     longitude: float
     address: str
+    photos: Optional[List[str]] = None
     created_at: int
 
 class FeedbackOut(FeedbackCreate):
@@ -175,11 +177,26 @@ def create_feedback(
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user)
 ):
-    db_feedback = Feedback(**feedback.dict(), user_id=current_user.id)
+    feedback_dict = feedback.dict()
+    # Convert list of photos to JSON string if needed, or store as is if DB handles it (sqlite doesn't handle lists natively)
+    # But wait, Pydantic handles validation. SQLAlchemy needs a string for TEXT column.
+    import json # already imported at top
+    if feedback.photos:
+        feedback_dict['photos'] = json.dumps(feedback.photos)
+    
+    db_feedback = Feedback(**feedback_dict, user_id=current_user.id)
     db.add(db_feedback)
     db.commit()
     db.refresh(db_feedback)
     return db_feedback
+
+@router.post("/messages/feedback", response_model=FeedbackOut)
+def create_feedback_endpoint(
+    feedback: FeedbackCreate, 
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(get_current_user)
+):
+    return create_feedback(feedback, db, current_user)
 
 @router.get("/messages/feedback/my", response_model=List[FeedbackOut])
 def get_my_feedbacks(

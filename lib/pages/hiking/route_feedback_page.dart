@@ -2,7 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:dio/dio.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:provider/provider.dart';
+import '../../services/database_helper.dart';
+import '../../services/api_service.dart';
+import '../../providers/auth_provider.dart';
 
 class RouteFeedbackPage extends StatefulWidget {
   const RouteFeedbackPage({super.key});
@@ -70,6 +77,125 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
       setState(() {
         _photos.add(photo);
       });
+    }
+  }
+
+  bool _isSubmitting = false;
+
+  Future<void> _publishFeedback() async {
+    if (_selectedType == null || _descriptionController.text.isEmpty) return;
+
+    setState(() => _isSubmitting = true);
+
+    try {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final userId = authProvider.user?.id;
+      if (userId == null) {
+        throw Exception('User not logged in');
+      }
+
+      // 1. Get Location
+      Position position;
+      try {
+        position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+          timeLimit: const Duration(seconds: 10),
+        );
+      } catch (e) {
+        // Fallback or error
+        debugPrint('Location error: $e');
+        ScaffoldMessenger.of(context).showSnackBar(
+           const SnackBar(content: Text('无法获取当前位置，请确保定位权限已开启')),
+        );
+        setState(() => _isSubmitting = false);
+        return;
+      }
+
+      // 2. Upload Photos (if any)
+      List<String> photoUrls = [];
+      if (_photos.isNotEmpty) {
+        for (var photo in _photos) {
+          try {
+            final bytes = await photo.readAsBytes();
+            final formData = FormData.fromMap({
+              'file': MultipartFile.fromBytes(
+                bytes,
+                filename: photo.name,
+              ),
+            });
+            // Reuse snapshot upload endpoint for now as it handles images
+            final response = await ApiService().post('/upload/snapshot', data: formData);
+            if (response.statusCode == 200 && response.data != null) {
+              photoUrls.add(response.data['url']);
+            }
+          } catch (e) {
+            debugPrint('Upload photo failed: $e');
+          }
+        }
+      }
+
+      // 3. Prepare Data
+      final feedbackData = {
+        'user_id': userId,
+        'type': _selectedType,
+        'content': _descriptionController.text,
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+        'address': 'Unknown', // Could use geocoding if needed
+        'photos': jsonEncode(photoUrls),
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+        'status': 'ACTIVE',
+        'sync_status': 1, // Pending
+      };
+
+      // 4. Save to Local DB
+      final localId = await DatabaseHelper().saveFeedback(feedbackData);
+      
+      // 5. Upload to Backend
+      try {
+        // Construct API payload (must match FeedbackCreate)
+        final apiPayload = {
+          'type': _selectedType,
+          'content': _descriptionController.text,
+          'latitude': position.latitude,
+          'longitude': position.longitude,
+          'address': 'Unknown',
+          'photos': photoUrls,
+          'created_at': feedbackData['created_at'],
+        };
+        
+        final response = await ApiService().post('/messages/feedback', data: apiPayload);
+        
+        if (response.statusCode == 200) {
+          // Update Local DB with remote ID
+          final remoteData = response.data;
+          feedbackData['local_id'] = localId;
+          feedbackData['remote_id'] = remoteData['id'];
+          feedbackData['sync_status'] = 0; // Synced
+          await DatabaseHelper().saveFeedback(feedbackData);
+        }
+      } catch (e) {
+        debugPrint('Upload feedback failed: $e');
+        // Keep sync_status = 1, will retry later (if background sync implemented)
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('路况反馈已发布')),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      debugPrint('Publish feedback error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('发布失败: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
     }
   }
 
@@ -283,20 +409,22 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
               child: ElevatedButton(
                 onPressed:
                     (_selectedType == null ||
-                        _descriptionController.text.isEmpty)
+                        _descriptionController.text.isEmpty ||
+                        _isSubmitting)
                     ? null
-                    : () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('路况反馈已发布')),
-                        );
-                        Navigator.pop(context);
-                      },
+                    : _publishFeedback,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF2E7D32),
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
-                child: const Text('发布'),
+                child: _isSubmitting 
+                    ? const SizedBox(
+                        width: 20, 
+                        height: 20, 
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                      )
+                    : const Text('发布'),
               ),
             ),
           ),

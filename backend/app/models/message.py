@@ -30,6 +30,7 @@ class Feedback(Base):
     latitude = Column(Float)
     longitude = Column(Float)
     address = Column(String)
+    photos = Column(String, nullable=True) # JSON list of URLs
     
     created_at = Column(BigInteger)
     status = Column(String, default='ACTIVE') # ACTIVE, EXPIRED
