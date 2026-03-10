@@ -217,6 +217,27 @@ class DatabaseHelper {
     return Sqflite.firstIntValue(res) ?? 0;
   }
 
+  Future<List<int>> getUnreadMessageIds(int partnerId, int currentUserId) async {
+    final db = await database;
+    final res = await db.query(
+      'messages',
+      columns: ['remote_id'],
+      where: 'sender_id = ? AND receiver_id = ? AND is_read = 0 AND remote_id IS NOT NULL',
+      whereArgs: [partnerId, currentUserId],
+    );
+    return res.map((e) => e['remote_id'] as int).toList();
+  }
+
+  Future<void> markMessagesAsRead(int partnerId, int currentUserId) async {
+    final db = await database;
+    await db.update(
+      'messages',
+      {'is_read': 1},
+      where: 'sender_id = ? AND receiver_id = ? AND is_read = 0',
+      whereArgs: [partnerId, currentUserId],
+    );
+  }
+
   Future<void> saveContact(Map<String, dynamic> contact) async {
     final db = await database;
     await db.insert(

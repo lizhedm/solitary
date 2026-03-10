@@ -164,6 +164,26 @@ class MessageProvider with ChangeNotifier {
   }
   
   Future<List<Message>> getMessagesForContact(int currentUserId, int partnerId) async {
+    // 1. Get unread remote IDs to sync with server
+    final unreadIds = await DatabaseHelper().getUnreadMessageIds(partnerId, currentUserId);
+    
+    // 2. Mark local messages as read
+    await DatabaseHelper().markMessagesAsRead(partnerId, currentUserId);
+    
+    // 3. Refresh contact list to update unread count immediately
+    await _refreshContactDetails(currentUserId);
+    
+    // 4. Sync read status with server (fire and forget)
+    if (unreadIds.isNotEmpty) {
+      _apiService.post('/messages/mark-read', data: {
+        'message_ids': unreadIds
+      }).then((_) {
+        debugPrint('Marked ${unreadIds.length} messages as read on server');
+      }).catchError((e) {
+        debugPrint('Failed to mark messages as read: $e');
+      });
+    }
+    
     final list = await DatabaseHelper().getMessages(partnerId, currentUserId);
     return list.map((e) => Message.fromJson(e)).toList();
   }

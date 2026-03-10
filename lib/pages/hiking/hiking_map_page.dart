@@ -8,6 +8,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:amap_flutter_map/amap_flutter_map.dart';
 import 'package:amap_flutter_base/amap_flutter_base.dart';
 import 'package:provider/provider.dart';
+import '../../utils/device_utils.dart';
 import '../../providers/auth_provider.dart';
 import '../../models/user.dart';
 import '../../models/hiking_record.dart';
@@ -93,9 +94,13 @@ class _HikingMapPageState extends State<HikingMapPage>
   List<dynamic> _nearbyHikers = [];
   Timer? _nearbyUpdateTimer;
   
+  // 是否是模拟器
+  bool _isSimulator = false;
+
   @override
   void initState() {
     super.initState();
+    _checkDevice();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initialize();
@@ -112,6 +117,15 @@ class _HikingMapPageState extends State<HikingMapPage>
     _locationSubscription?.cancel();
     _amapController?.disponse();
     super.dispose();
+  }
+
+  Future<void> _checkDevice() async {
+    final isSim = await DeviceUtils.isSimulator();
+    if (mounted) {
+      setState(() {
+        _isSimulator = isSim;
+      });
+    }
   }
 
   Future<void> _updateNearbyHikers() async {
@@ -913,7 +927,33 @@ class _HikingMapPageState extends State<HikingMapPage>
         children: [
           // 地图区域（使用高德AMap）
           Positioned.fill(
-            child: Builder(
+            child: _isSimulator 
+                ? Container(
+                    color: Colors.grey[200],
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.map_outlined, size: 64, color: Colors.grey),
+                          const SizedBox(height: 16),
+                          const Text(
+                            '地图功能在模拟器中不可用',
+                            style: TextStyle(
+                              color: Colors.grey,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            '请使用真机测试地图相关功能',
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : Builder(
               builder: (context) {
                 final Set<Polyline> _polylines = <Polyline>{};
                 if (_pathPoints.isNotEmpty) {

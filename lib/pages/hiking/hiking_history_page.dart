@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'package:amap_flutter_map/amap_flutter_map.dart';
 import 'package:amap_flutter_base/amap_flutter_base.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import '../../utils/device_utils.dart';
 
 import '../../services/database_helper.dart';
 
@@ -328,6 +329,22 @@ class HistoryDetailPage extends StatefulWidget {
 
 class _HistoryDetailPageState extends State<HistoryDetailPage> {
   bool _showReplay = false;
+  bool _isSimulator = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkDevice();
+  }
+
+  Future<void> _checkDevice() async {
+    final isSim = await DeviceUtils.isSimulator();
+    if (mounted) {
+      setState(() {
+        _isSimulator = isSim;
+      });
+    }
+  }
 
   String _getCorrectedImageUrl(String? url) {
     if (url == null || url.isEmpty) return '';
@@ -471,6 +488,22 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
   }
 
   Widget _buildReplayMap() {
+    if (_isSimulator) {
+      return Container(
+        color: Colors.grey[200],
+        child: const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.map_outlined, size: 48, color: Colors.grey),
+              SizedBox(height: 8),
+              Text('模拟器不支持地图回放', style: TextStyle(color: Colors.grey)),
+            ],
+          ),
+        ),
+      );
+    }
+
     final record = widget.record;
     if (record.coordinatesJson == null) return const SizedBox.shrink();
 
