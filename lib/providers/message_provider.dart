@@ -35,20 +35,30 @@ class MessageProvider with ChangeNotifier {
   Future<void> fetchContacts(int currentUserId) async {
     // 1. Load from local
     final localContacts = await DatabaseHelper().getContacts();
-    _contacts = localContacts.map((e) => Contact.fromJson(e)).toList();
-    notifyListeners();
+    
+    // Only notify if contacts list was empty (first load)
+    if (_contacts.isEmpty) {
+       _contacts = localContacts.map((e) => Contact.fromJson(e)).toList();
+       // Hydrate with last messages
+       await _refreshContactDetails(currentUserId);
+    }
     
     // 2. Load from API
     try {
       final response = await _apiService.get('/friends');
       if (response.statusCode == 200) {
         final List<dynamic> data = response.data;
+        bool hasChanges = false;
+        
         for (var item in data) {
            final contact = Contact.fromJson(item);
+           // Check if this contact is new or updated
+           // For now, just save blindly, but we could optimize
            await DatabaseHelper().saveContact(contact.toJson());
         }
         
         // Update unread counts and last messages
+        // This will trigger notifyListeners()
         await _refreshContactDetails(currentUserId);
       }
     } catch (e) {
