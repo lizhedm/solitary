@@ -52,6 +52,7 @@ class FeedbackOut(FeedbackCreate):
     status: str
     view_count: int
     confirm_count: int
+    photos: Optional[List[str]] = None
     
     class Config:
         from_attributes = True
@@ -188,6 +189,17 @@ def create_feedback(
     db.add(db_feedback)
     db.commit()
     db.refresh(db_feedback)
+
+    # Convert photos back to list for response if needed, 
+    # but Pydantic's from_attributes might struggle if the attribute on db_feedback is a JSON string
+    # while the model expects a list.
+    # We should manually patch it or use a property.
+    # Let's simple reload or patch.
+    if db_feedback.photos and isinstance(db_feedback.photos, str):
+        try:
+            db_feedback.photos = json.loads(db_feedback.photos)
+        except:
+            db_feedback.photos = []
     return db_feedback
 
 @router.post("/messages/feedback", response_model=FeedbackOut)
@@ -203,4 +215,12 @@ def get_my_feedbacks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    return db.query(Feedback).filter(Feedback.user_id == current_user.id).all()
+    feedbacks = db.query(Feedback).filter(Feedback.user_id == current_user.id).all()
+    # Manual conversion of photos from JSON string to list
+    for f in feedbacks:
+        if f.photos and isinstance(f.photos, str):
+            try:
+                f.photos = json.loads(f.photos)
+            except:
+                f.photos = []
+    return feedbacks
