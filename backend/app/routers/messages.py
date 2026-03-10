@@ -185,7 +185,31 @@ class SOSOut(BaseModel):
     class Config:
         from_attributes = True
 
+class SOSCreate(BaseModel):
+    latitude: float
+    longitude: float
+    message: str
+
 # --- SOS Endpoints (Placeholder for now, usually part of hiking or separate router, but putting here for map query) ---
+
+@router.post("/messages/sos", response_model=SOSOut)
+def create_sos(
+    sos: SOSCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    db_sos = SOSAlert(
+        user_id=current_user.id,
+        latitude=sos.latitude,
+        longitude=sos.longitude,
+        message=sos.message,
+        status='ACTIVE',
+        created_at=int(time.time() * 1000)
+    )
+    db.add(db_sos)
+    db.commit()
+    db.refresh(db_sos)
+    return db_sos
 
 @router.get("/messages/sos", response_model=List[SOSOut])
 def get_sos_in_bounds(
