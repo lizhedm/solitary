@@ -9,6 +9,8 @@ import 'chat_page.dart';
 import 'question_replies_page.dart';
 import '../hiking/route_feedback_detail_page.dart';
 
+import 'package:solitary/services/api_service.dart';
+
 class MessageCenterPage extends StatefulWidget {
   const MessageCenterPage({super.key});
 
@@ -256,7 +258,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
             // Group by sender_id
             final incomingQuestions = await db.query(
               'messages',
-              where: 'receiver_id = ? AND type = ?',
+              where: 'receiver_id = ? AND type = ? AND hike_id IS NULL',
               whereArgs: [currentUserId, 'question'],
               orderBy: 'timestamp DESC'
             );
@@ -265,10 +267,31 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
             for (var msg in incomingQuestions) {
               final senderId = msg['sender_id'] as int;
               if (!incomingMap.containsKey(senderId)) {
-                // Get sender info (try contact or placeholder)
-                // In real app we should fetch user info if not exists
+                // Get sender info
+                // Try local contact first
+                var contact = await DatabaseHelper().getContact(senderId);
+                String name = contact?['nickname'] ?? '用户 $senderId';
+                String avatar = contact?['avatar'] ?? '';
+                
+                // If not found locally, fetch from API
+                if (contact == null) {
+                  try {
+                    final response = await ApiService().get('/users/$senderId');
+                    if (response.statusCode == 200 && response.data != null) {
+                      final user = response.data;
+                      name = user['nickname'] ?? '用户 $senderId';
+                      avatar = user['avatar'] ?? '';
+                      // Optionally save to contacts or temp cache?
+                    }
+                  } catch (e) {
+                    // Ignore error, keep default
+                  }
+                }
+
                 incomingMap[senderId] = {
                   'sender_id': senderId,
+                  'sender_name': name,
+                  'sender_avatar': avatar,
                   'content': msg['content'],
                   'timestamp': msg['timestamp'],
                   'is_incoming': true
@@ -277,7 +300,32 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
             }
             
             final List<Map<String, dynamic>> combined = [];
-            combined.addAll(groupedQuestions.values);
+            // Filter out finished hikes for my questions too?
+            // "hike_id IS NULL" ensures we only show active ones.
+            // Check my questions too:
+            final myQuestionsFiltered = await db.query(
+              'messages',
+              where: 'sender_id = ? AND type = ? AND hike_id IS NULL',
+              whereArgs: [currentUserId, 'question'],
+              orderBy: 'timestamp DESC'
+            );
+            
+            final Map<String, Map<String, dynamic>> myGroupedQuestions = {};
+            for (var msg in myQuestionsFiltered) {
+               // ... same grouping logic ...
+              final content = msg['content'] as String;
+              if (!myGroupedQuestions.containsKey(content)) {
+                myGroupedQuestions[content] = {
+                  'content': content,
+                  'timestamp': msg['timestamp'],
+                  'recipients': <int>[],
+                  'reply_count': 0
+                };
+              }
+              myGroupedQuestions[content]!['recipients'].add(msg['receiver_id']);
+            }
+
+            combined.addAll(myGroupedQuestions.values);
             combined.addAll(incomingMap.values);
             
             // Sort by timestamp
@@ -337,16 +385,27 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                 // 2. Incoming Question (Single Chat)
                 else {
                    final senderId = item['sender_id'] as int;
+                   final senderName = item['sender_name'] as String;
+                   final senderAvatar = item['sender_avatar'] as String;
+
                    return Card(
                     margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: Colors.orange.shade100,
-                        child: const Icon(Icons.person, color: Colors.orange),
-                      ),
+                      leading: (senderAvatar.isNotEmpty)
+                          ? CircleAvatar(
+                              backgroundImage: CachedNetworkImageProvider(
+                                senderAvatar.startsWith('http') 
+                                  ? senderAvatar 
+                                  : 'http://114.55.148.245:8000$senderAvatar'
+                              ),
+                            )
+                          : CircleAvatar(
+                              backgroundColor: Colors.orange.shade100,
+                              child: Text(senderName.substring(0, 1), style: const TextStyle(color: Colors.orange)),
+                            ),
                       title: Text('收到提问: ${item['content']}', maxLines: 1, overflow: TextOverflow.ellipsis),
                       subtitle: Text(
-                        '来自用户 $senderId • ${_formatTime(item['timestamp'])}',
+                        '来自 $senderName • ${_formatTime(item['timestamp'])}',
                         style: const TextStyle(fontSize: 12),
                       ),
                       trailing: const Icon(Icons.chat),
@@ -355,8 +414,8 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                           context,
                           MaterialPageRoute(
                             builder: (context) => ChatPage(
-                              title: '用户 $senderId', // Should fetch real nickname
-                              avatar: '',
+                              title: senderName,
+                              avatar: senderAvatar,
                               partnerId: senderId,
                             ),
                           ),

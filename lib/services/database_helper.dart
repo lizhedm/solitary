@@ -297,6 +297,26 @@ class DatabaseHelper {
     );
   }
 
+  Future<void> associateMessagesWithHike(int hikeId, int userId, int startTime, int endTime) async {
+    final db = await database;
+    await db.update(
+      'messages',
+      {'hike_id': hikeId},
+      where: '((sender_id = ? OR receiver_id = ?) AND timestamp >= ? AND timestamp <= ?)',
+      whereArgs: [userId, userId, startTime * 1000, endTime * 1000],
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getMessagesByHikeId(int hikeId) async {
+    final db = await database;
+    return await db.query(
+      'messages',
+      where: 'hike_id = ?',
+      whereArgs: [hikeId],
+      orderBy: 'timestamp ASC',
+    );
+  }
+
   Future<void> saveContact(Map<String, dynamic> contact) async {
     final db = await database;
     await db.insert(

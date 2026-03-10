@@ -345,12 +345,21 @@ class _HikingMapPageState extends State<HikingMapPage>
 
     try {
       // 请求位置权限
-      final status = await Permission.location.request();
-      debugPrint('Location permission: $status');
+      var status = await Permission.location.request();
+      debugPrint('Location permission request result: $status');
+      
+      // On iOS, if user grants "When In Use" but we requested "Always" (via Permission.location),
+      // status might not be granted. Check specifically.
+      if (!status.isGranted && !status.isLimited) {
+         final status2 = await Permission.locationWhenInUse.status;
+         if (status2.isGranted || status2.isLimited) {
+            status = status2;
+         }
+      }
 
-      if (status.isGranted && mounted) {
+      if ((status.isGranted || status.isLimited) && mounted) {
         _initLocation();
-      } else if (status.isDenied) {
+      } else {
         // 权限被拒绝，显示提示
         if (mounted) {
           setState(() {
@@ -481,10 +490,22 @@ class _HikingMapPageState extends State<HikingMapPage>
     debugPrint('Location button pressed');
 
     // 1. Check/Request Permission
+    // Check both location (group) and specific whenInUse to handle iOS nuances
     var status = await Permission.location.status;
-    if (!status.isGranted) {
+    if (!status.isGranted && !status.isLimited) {
+      status = await Permission.locationWhenInUse.status;
+    }
+    
+    if (!status.isGranted && !status.isLimited) {
+      // Try requesting
       status = await Permission.location.request();
-      if (!status.isGranted) {
+      
+      // If still not granted, check if it's because we only got WhenInUse (which is fine for this)
+      if (!status.isGranted && !status.isLimited) {
+         status = await Permission.locationWhenInUse.status;
+      }
+
+      if (!status.isGranted && !status.isLimited) {
         if (mounted) {
           ScaffoldMessenger.of(
             context,
@@ -1688,6 +1709,12 @@ class _HikingMapPageState extends State<HikingMapPage>
         _buildToolButton(Icons.group, '队友', () {}, badgeCount: 3),
         const SizedBox(height: 12),
         _buildToolButton(Icons.add_comment, '路况', () {
+          if (_hikingState != 'RUNNING') {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('请先开始徒步才能发布路况')),
+            );
+            return;
+          }
           if (_position != null) {
             Navigator.push(
               context,
@@ -1706,6 +1733,12 @@ class _HikingMapPageState extends State<HikingMapPage>
         }),
         const SizedBox(height: 12),
         _buildToolButton(Icons.help_outline, '求助', () {
+          if (_hikingState != 'RUNNING') {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('请先开始徒步才能发送求助')),
+            );
+            return;
+          }
           if (_position != null) {
             Navigator.push(
               context,
@@ -1991,12 +2024,19 @@ class _HikingMapPageState extends State<HikingMapPage>
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final userId = authProvider.user?.id ?? 0;
     
+    // 5. 保存记录
+    int? localRecordId;
+    // Calculate final stats
+    final now = DateTime.now();
+    final start = _startTime ?? now;
+    final duration = _currentDuration.inSeconds;
+    
     final record = HikingRecord(
       id: '', // Backend will generate ID
       userId: userId,
-      startTime: _startTime ?? DateTime.now().subtract(_currentDuration),
-      endTime: DateTime.now(),
-      duration: _currentDuration.inSeconds,
+      startTime: start,
+      endTime: now,
+      duration: duration,
       distance: _totalDistance,
       calories: _calories,
       elevationGain: _elevationGain,
@@ -2006,8 +2046,6 @@ class _HikingMapPageState extends State<HikingMapPage>
       coordinatesJson: jsonEncode(_pathPoints.map((p) => {'lat': p.latitude, 'lng': p.longitude}).toList()),
     );
     
-    // 5. 保存记录
-    int? localRecordId;
     final localRecordMap = record.toJson();
     
     try {
@@ -2015,6 +2053,11 @@ class _HikingMapPageState extends State<HikingMapPage>
       localRecordMap.remove('id'); // 移除空ID，使用自增ID
       localRecordMap['sync_status'] = 1; // 标记为待上传
       localRecordId = await DatabaseHelper().saveHikingRecord(localRecordMap);
+      
+      // Associate messages with this hike
+      final startTs = (start.millisecondsSinceEpoch / 1000).round();
+      final endTs = (now.millisecondsSinceEpoch / 1000).round();
+      await DatabaseHelper().associateMessagesWithHike(localRecordId, userId, startTs, endTs);
       
       // 5.2 上传到服务器
       final response = await ApiService().post('/hiking-records', data: record.toJson());

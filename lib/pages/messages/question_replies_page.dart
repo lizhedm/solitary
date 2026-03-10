@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:solitary/services/database_helper.dart';
+import 'package:solitary/services/api_service.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'chat_page.dart';
 
 class QuestionRepliesPage extends StatefulWidget {
@@ -37,15 +39,19 @@ class _QuestionRepliesPageState extends State<QuestionRepliesPage> {
       String name = user?['nickname'] ?? '用户 $userId';
       String avatar = user?['avatar'] ?? '';
       
-      // 2. Get Last Message (Reply)
-      // Query message where sender = userId and receiver = me
-      // This part is tricky because we need 'currentUserId'.
-      // For now, let's just query messages where sender_id = userId
-      // Ideally we should pass currentUserId to this page
-      
-      // Placeholder for now as we don't have currentUserId easily accessible without Provider
-      // But we can assume if there is ANY message from them, it's a reply?
-      // Or we can just list them as "Pending"
+      // If not found locally, fetch from API
+      if (user == null) {
+        try {
+          final response = await ApiService().get('/users/$userId');
+          if (response.statusCode == 200 && response.data != null) {
+            final u = response.data;
+            name = u['nickname'] ?? '用户 $userId';
+            avatar = u['avatar'] ?? '';
+          }
+        } catch (e) {
+          // Ignore
+        }
+      }
       
       loaded.add({
         'id': userId,
@@ -98,15 +104,25 @@ class _QuestionRepliesPageState extends State<QuestionRepliesPage> {
               itemBuilder: (context, index) {
                 final user = _recipients[index];
                 final hasReply = user['lastMsg'].toString().isNotEmpty;
+                final avatar = user['avatar'] as String;
+                final name = user['name'] as String;
                 
                 return ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: hasReply ? Colors.green.shade100 : Colors.grey.shade200,
-                    child: (user['avatar'] != null && user['avatar'].toString().isNotEmpty)
-                        ? null // TODO: NetworkImage
-                        : Text((user['name'] as String).substring(0, 1)),
-                  ),
-                  title: Text(user['name'] as String),
+                  leading: (avatar.isNotEmpty)
+                      ? CircleAvatar(
+                          backgroundImage: CachedNetworkImageProvider(
+                            avatar.startsWith('http') 
+                              ? avatar 
+                              : 'http://114.55.148.245:8000$avatar'
+                          ),
+                        )
+                      : CircleAvatar(
+                          backgroundColor: hasReply ? Colors.green.shade100 : Colors.grey.shade200,
+                          child: Text(name.substring(0, 1), 
+                            style: TextStyle(color: hasReply ? Colors.green : Colors.grey)
+                          ),
+                        ),
+                  title: Text(name),
                   subtitle: Text(
                     hasReply ? user['lastMsg'] as String : '等待回复...',
                     style: TextStyle(
@@ -121,8 +137,8 @@ class _QuestionRepliesPageState extends State<QuestionRepliesPage> {
                       context,
                       MaterialPageRoute(
                         builder: (context) => ChatPage(
-                          title: user['name'] as String,
-                          avatar: user['avatar'] as String,
+                          title: name,
+                          avatar: avatar,
                           partnerId: user['id'] as int,
                         ),
                       ),

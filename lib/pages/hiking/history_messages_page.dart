@@ -1,17 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:solitary/providers/auth_provider.dart';
+import 'package:solitary/services/database_helper.dart';
 import '../messages/chat_page.dart';
 
-class HistoryMessagesPage extends StatelessWidget {
-  const HistoryMessagesPage({super.key});
+class HistoryMessagesPage extends StatefulWidget {
+  final int hikeId;
+  const HistoryMessagesPage({super.key, required this.hikeId});
 
   @override
+  State<HistoryMessagesPage> createState() => _HistoryMessagesPageState();
+}
+
+class _HistoryMessagesPageState extends State<HistoryMessagesPage> {
+  @override
   Widget build(BuildContext context) {
-    // Mock Data
-    final participants = [
-      {'id': '1', 'name': '山野行者', 'msgCount': 3, 'avatar': 'S', 'snapStatus': 'NONE'},
-      {'id': '2', 'name': '路人A', 'msgCount': 2, 'avatar': 'A', 'snapStatus': 'PENDING'},
-      {'id': '3', 'name': 'Lisa', 'msgCount': 5, 'avatar': 'L', 'snapStatus': 'MUTUAL'},
-    ];
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final currentUserId = authProvider.user?.id ?? 0;
 
     return Scaffold(
       appBar: AppBar(
@@ -34,26 +39,39 @@ class HistoryMessagesPage extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: ListView.builder(
-              itemCount: participants.length,
-              itemBuilder: (context, index) {
-                final p = participants[index];
-                return ListTile(
-                  leading: CircleAvatar(child: Text(p['avatar'] as String)),
-                  title: Text(p['name'] as String),
-                  subtitle: Text('${p['msgCount']} 条对话'),
-                  trailing: _buildSnapButton(context, p),
-                  onTap: () {
-                    // Navigate to ChatPage to view messages
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => ChatPage(
-                          title: p['name'] as String,
-                          avatar: p['avatar'] as String,
-                          partnerId: int.tryParse(p['id'] as String) ?? 0,
-                        ),
-                      ),
+            child: FutureBuilder<List<Map<String, dynamic>>>(
+              future: _loadHistoryParticipants(currentUserId),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                
+                final participants = snapshot.data!;
+                if (participants.isEmpty) {
+                  return const Center(child: Text('本次徒步没有临时会话'));
+                }
+
+                return ListView.builder(
+                  itemCount: participants.length,
+                  itemBuilder: (context, index) {
+                    final p = participants[index];
+                    return ListTile(
+                      leading: CircleAvatar(child: Text((p['name'] as String).substring(0, 1))),
+                      title: Text(p['name'] as String),
+                      subtitle: Text('${p['msgCount']} 条对话'),
+                      onTap: () {
+                        // Navigate to ChatPage to view messages
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => ChatPage(
+                              title: p['name'] as String,
+                              avatar: p['avatar'] as String?,
+                              partnerId: p['id'] as int,
+                            ),
+                          ),
+                        );
+                      },
                     );
                   },
                 );
@@ -65,58 +83,32 @@ class HistoryMessagesPage extends StatelessWidget {
     );
   }
 
-  Widget _buildSnapButton(BuildContext context, Map<String, Object> participant) {
-    final status = participant['snapStatus'] as String;
+  Future<List<Map<String, dynamic>>> _loadHistoryParticipants(int currentUserId) async {
+    final messages = await DatabaseHelper().getMessagesByHikeId(widget.hikeId);
+    final Map<int, int> msgCounts = {};
     
-    if (status == 'MUTUAL') {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: Colors.green.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: const Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.check_circle, size: 16, color: Colors.green),
-            SizedBox(width: 4),
-            Text('好友', style: TextStyle(color: Colors.green, fontSize: 12)),
-          ],
-        ),
-      );
-    } else if (status == 'PENDING') {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: Colors.orange.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: const Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.access_time, size: 16, color: Colors.orange),
-            SizedBox(width: 4),
-            Text('等待', style: TextStyle(color: Colors.orange, fontSize: 12)),
-          ],
-        ),
-      );
-    } else {
-      return ElevatedButton.icon(
-        onPressed: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('已发送合拍请求')),
-          );
-        },
-        icon: const Icon(Icons.thumb_up, size: 16),
-        label: const Text('合拍'),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF2E7D32),
-          foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          minimumSize: Size.zero,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-      );
+    // Group by partner
+    for (var msg in messages) {
+      final senderId = msg['sender_id'] as int;
+      final receiverId = msg['receiver_id'] as int;
+      final partnerId = (senderId == currentUserId) ? receiverId : senderId;
+      
+      msgCounts[partnerId] = (msgCounts[partnerId] ?? 0) + 1;
     }
+    
+    // Fetch partner info
+    final List<Map<String, dynamic>> participants = [];
+    for (var partnerId in msgCounts.keys) {
+      final contact = await DatabaseHelper().getContact(partnerId);
+      participants.add({
+        'id': partnerId,
+        'name': contact?['nickname'] ?? '用户 $partnerId',
+        'avatar': contact?['avatar'],
+        'msgCount': msgCounts[partnerId],
+        'snapStatus': 'NONE' // Could be fetched if needed
+      });
+    }
+    
+    return participants;
   }
 }

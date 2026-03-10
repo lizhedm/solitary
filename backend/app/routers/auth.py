@@ -119,6 +119,13 @@ class UserUpdate(BaseModel):
     email: Optional[str] = None
     avatar: Optional[str] = None
 
+@router.get("/users/{user_id}", response_model=UserSchema)
+async def read_user_by_id(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
 @router.get("/users/me", response_model=UserSchema)
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user

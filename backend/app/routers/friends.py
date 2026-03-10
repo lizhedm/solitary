@@ -64,13 +64,17 @@ def add_friend(
     if exists:
         return {"status": exists.status}
         
-    # Create friendship (auto accept for testing)
+    # Create friendship (PENDING for real scenario, but user asked to remove auto-friend logic?)
+    # User said: "将之前写的将user1和user2设置为好友的逻辑去掉"
+    # This might mean removing any hardcoded auto-friending in other places, or changing this back to pending.
+    # Assuming user wants standard friend request flow:
+    
     friendship = Friendship(
         user_id=current_user.id,
         friend_id=user_id,
-        status="ACCEPTED",
+        status="PENDING",
         created_at=int(time.time() * 1000)
     )
     db.add(friendship)
     db.commit()
-    return {"status": "ACCEPTED"}
+    return {"status": "PENDING"}
