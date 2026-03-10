@@ -35,6 +35,11 @@ class MessageOut(BaseModel):
 class MarkReadRequest(BaseModel):
     message_ids: List[int]
 
+class MessageAssociateRequest(BaseModel):
+    hike_id: int
+    start_time: int
+    end_time: int
+
 # --- Feedback Models ---
 
 class FeedbackCreate(BaseModel):
@@ -321,6 +326,26 @@ def mark_messages_read(
     ).update({"is_read": True}, synchronize_session=False)
     db.commit()
     return {"success": True}
+
+@router.post("/messages/associate")
+def associate_messages(
+    req: MessageAssociateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    将用户在指定时间段内产生的所有消息关联到某个徒步记录 hike_id
+    """
+    # 更新发送或接收的所有在该时间范围内的消息
+    # 时间是毫秒级
+    updated_count = db.query(Message).filter(
+        (Message.sender_id == current_user.id) | (Message.receiver_id == current_user.id),
+        Message.timestamp >= req.start_time,
+        Message.timestamp <= req.end_time
+    ).update({"hike_id": req.hike_id}, synchronize_session=False)
+    
+    db.commit()
+    return {"success": True, "updated_count": updated_count}
 
 # --- SOS Models ---
 class SOSOut(BaseModel):

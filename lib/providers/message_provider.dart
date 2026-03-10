@@ -205,7 +205,7 @@ class MessageProvider with ChangeNotifier {
     }
   }
   
-  Future<List<Message>> getMessagesForContact(int currentUserId, int partnerId) async {
+  Future<List<Message>> getMessagesForContact(int currentUserId, int partnerId, {int? hikeId}) async {
     // 1. Get unread remote IDs to sync with server
     final unreadIds = await DatabaseHelper().getUnreadMessageIds(partnerId, currentUserId);
     
@@ -226,7 +226,19 @@ class MessageProvider with ChangeNotifier {
       });
     }
     
-    final list = await DatabaseHelper().getMessages(partnerId, currentUserId);
+    List<Map<String, dynamic>> list;
+    if (hikeId != null) {
+      // Fetch messages for a specific hike with this partner
+      final allHikeMessages = await DatabaseHelper().getMessagesByHikeId(hikeId);
+      list = allHikeMessages.where((msg) {
+        final senderId = msg['sender_id'] as int;
+        final receiverId = msg['receiver_id'] as int;
+        return (senderId == currentUserId && receiverId == partnerId) || 
+               (senderId == partnerId && receiverId == currentUserId);
+      }).toList();
+    } else {
+      list = await DatabaseHelper().getMessages(partnerId, currentUserId);
+    }
     return list.map((e) => Message.fromJson(e)).toList();
   }
   

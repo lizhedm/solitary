@@ -1982,7 +1982,12 @@ class _HikingMapPageState extends State<HikingMapPage>
 
   /// _endHiking - 结束徒步并保存数据
   Future<void> _endHiking() async {
-    // 1. 停止计时和定位
+    // 1. 记录结束时间并获取开始时间（在停止计时器前）
+    final DateTime now = DateTime.now();
+    final DateTime start = _startTime ?? now;
+    final int duration = _currentDuration.inSeconds;
+    
+    // 2. 停止计时和定位
     _stopTimer();
     LocationManager().stopHiking(); // Notify backend hiking stopped
     final LatLng endPos = (_pathPoints.isNotEmpty)
@@ -1990,7 +1995,7 @@ class _HikingMapPageState extends State<HikingMapPage>
         : (_position ?? _defaultPosition);
     _addEndMarker(endPos);
     
-    // 2. 截图
+    // 3. 截图
     Uint8List? snapshotBytes;
     if (_amapController != null) {
       try {
@@ -2000,7 +2005,7 @@ class _HikingMapPageState extends State<HikingMapPage>
       }
     }
     
-    // 3. 上传截图
+    // 4. 上传截图
     String? snapshotUrl;
     if (snapshotBytes != null) {
       try {
@@ -2020,54 +2025,77 @@ class _HikingMapPageState extends State<HikingMapPage>
       }
     }
     
-    // 4. 创建记录
+    // 5. 准备关联消息
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final userId = authProvider.user?.id ?? 0;
+    final startTs = (start.millisecondsSinceEpoch / 1000).round();
+    final endTs = (now.millisecondsSinceEpoch / 1000).round();
     
-    // 5. 保存记录
+    // 6. 保存记录
     int? localRecordId;
-    // Calculate final stats
-    final now = DateTime.now();
-    final start = _startTime ?? now;
-    final duration = _currentDuration.inSeconds;
-    
-    final record = HikingRecord(
-      id: '', // Backend will generate ID
-      userId: userId,
-      startTime: start,
-      endTime: now,
-      duration: duration,
-      distance: _totalDistance,
-      calories: _calories,
-      elevationGain: _elevationGain,
-      startLocation: 'Unknown', 
-      endLocation: 'Unknown',
-      mapSnapshotUrl: snapshotUrl,
-      coordinatesJson: jsonEncode(_pathPoints.map((p) => {'lat': p.latitude, 'lng': p.longitude}).toList()),
-    );
-    
-    final localRecordMap = record.toJson();
+    int associatedCount = 0;
     
     try {
-      // 5.1 先保存到本地数据库
-      localRecordMap.remove('id'); // 移除空ID，使用自增ID
-      localRecordMap['sync_status'] = 1; // 标记为待上传
+      // 6.1 先计算并关联本地消息，获取数量
+      // 注意：这里先关联到一个临时ID或者在保存记录后再关联
+      // 我们先保存记录以获取 localRecordId
+      
+      final record = HikingRecord(
+        id: '', // Backend will generate ID
+        userId: userId,
+        startTime: start,
+        endTime: now,
+        duration: duration,
+        distance: _totalDistance,
+        calories: _calories,
+        elevationGain: _elevationGain,
+        startLocation: 'Unknown', 
+        endLocation: 'Unknown',
+        mapSnapshotUrl: snapshotUrl,
+        messageCount: 0, // 初始为0
+        coordinatesJson: jsonEncode(_pathPoints.map((p) => {'lat': p.latitude, 'lng': p.longitude}).toList()),
+      );
+      
+      final localRecordMap = record.toJson();
+      localRecordMap.remove('id'); 
+      localRecordMap['sync_status'] = 1; 
       localRecordId = await DatabaseHelper().saveHikingRecord(localRecordMap);
       
-      // Associate messages with this hike
-      final startTs = (start.millisecondsSinceEpoch / 1000).round();
-      final endTs = (now.millisecondsSinceEpoch / 1000).round();
-      await DatabaseHelper().associateMessagesWithHike(localRecordId, userId, startTs, endTs);
+      // 6.2 关联本地消息并更新数量
+      associatedCount = await DatabaseHelper().associateMessagesWithHike(localRecordId, userId, startTs, endTs);
+      debugPrint('Associated $associatedCount messages with hike $localRecordId');
       
-      // 5.2 上传到服务器
-      final response = await ApiService().post('/hiking-records', data: record.toJson());
+      // 更新本地记录的消息数
+      localRecordMap['local_id'] = localRecordId;
+      localRecordMap['message_count'] = associatedCount;
+      await DatabaseHelper().saveHikingRecord(localRecordMap);
+      
+      // 6.3 上传到服务器
+      final syncRecord = record.copyWith(messageCount: associatedCount);
+      final response = await ApiService().post('/hiking-records', data: syncRecord.toJson());
       
       if (response.statusCode == 200) {
-         // 5.3 更新本地记录状态为已同步
          final remoteRecord = HikingRecord.fromJson(response.data);
-         localRecordMap['remote_id'] = int.tryParse(remoteRecord.id);
-         localRecordMap['sync_status'] = 0; // 已同步
-         localRecordMap['local_id'] = localRecordId; // 更新指定记录
+         final remoteId = int.tryParse(remoteRecord.id);
+         
+         // 6.4 同步消息关联到服务器
+         if (remoteId != null && associatedCount > 0) {
+            try {
+              await ApiService().post('/messages/associate', data: {
+                'hike_id': remoteId,
+                'start_time': start.millisecondsSinceEpoch,
+                'end_time': now.millisecondsSinceEpoch,
+              });
+              debugPrint('Synced message association to server for hike $remoteId');
+            } catch (e) {
+              debugPrint('Sync message association failed: $e');
+            }
+         }
+         
+         // 6.5 更新本地记录状态为已同步
+         localRecordMap['remote_id'] = remoteId;
+         localRecordMap['sync_status'] = 0; 
+         localRecordMap['local_id'] = localRecordId; 
          
          await DatabaseHelper().saveHikingRecord(localRecordMap);
       }
@@ -2076,9 +2104,6 @@ class _HikingMapPageState extends State<HikingMapPage>
       if (mounted) {
         if (localRecordId == null) {
            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('保存记录失败: $e')));
-        } else {
-           // 即使上传失败，本地已保存，不阻塞用户体验
-           // ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('记录已保存到本地')));
         }
       }
     }

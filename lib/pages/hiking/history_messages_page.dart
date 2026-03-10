@@ -68,6 +68,7 @@ class _HistoryMessagesPageState extends State<HistoryMessagesPage> {
                               title: p['name'] as String,
                               avatar: p['avatar'] as String?,
                               partnerId: p['id'] as int,
+                              hikeId: widget.hikeId, // Pass hikeId to show only hike messages
                             ),
                           ),
                         );

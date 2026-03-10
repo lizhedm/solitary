@@ -9,12 +9,14 @@ class ChatPage extends StatefulWidget {
   final String title;
   final String? avatar;
   final int partnerId;
+  final int? hikeId; // Add hikeId for history mode
 
   const ChatPage({
     super.key, 
     required this.title, 
     this.avatar,
-    required this.partnerId
+    required this.partnerId,
+    this.hikeId,
   });
 
   @override
@@ -63,7 +65,8 @@ class _ChatPageState extends State<ChatPage> {
 
     final msgs = await msgProvider.getMessagesForContact(
       authProvider.user!.id, 
-      widget.partnerId
+      widget.partnerId,
+      hikeId: widget.hikeId, // Pass hikeId if present
     );
 
     if (mounted) {
@@ -182,6 +185,7 @@ class _ChatPageState extends State<ChatPage> {
                     },
                   ),
           ),
+          if (widget.hikeId == null) // Only show input if not in history mode
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(

@@ -22,7 +22,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -138,6 +138,10 @@ class DatabaseHelper {
       // Add missing columns to hiking_records
       try { await db.execute('ALTER TABLE hiking_records ADD COLUMN coordinates_json TEXT'); } catch (_) {}
       try { await db.execute('ALTER TABLE hiking_records ADD COLUMN map_snapshot_url TEXT'); } catch (_) {}
+      try { await db.execute('ALTER TABLE hiking_records ADD COLUMN message_count INTEGER DEFAULT 0'); } catch (_) {}
+    }
+    if (oldVersion < 6) {
+      // Ensure message_count column exists
       try { await db.execute('ALTER TABLE hiking_records ADD COLUMN message_count INTEGER DEFAULT 0'); } catch (_) {}
     }
   }
@@ -297,9 +301,9 @@ class DatabaseHelper {
     );
   }
 
-  Future<void> associateMessagesWithHike(int hikeId, int userId, int startTime, int endTime) async {
+  Future<int> associateMessagesWithHike(int hikeId, int userId, int startTime, int endTime) async {
     final db = await database;
-    await db.update(
+    return await db.update(
       'messages',
       {'hike_id': hikeId},
       where: '((sender_id = ? OR receiver_id = ?) AND timestamp >= ? AND timestamp <= ?)',

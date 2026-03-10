@@ -66,4 +66,36 @@ class HikingRecord {
       'coordinates_json': coordinatesJson,
     };
   }
+
+  HikingRecord copyWith({
+    String? id,
+    int? userId,
+    DateTime? startTime,
+    DateTime? endTime,
+    int? duration,
+    double? distance,
+    int? calories,
+    int? elevationGain,
+    String? startLocation,
+    String? endLocation,
+    String? mapSnapshotUrl,
+    int? messageCount,
+    String? coordinatesJson,
+  }) {
+    return HikingRecord(
+      id: id ?? this.id,
+      userId: userId ?? this.userId,
+      startTime: startTime ?? this.startTime,
+      endTime: endTime ?? this.endTime,
+      duration: duration ?? this.duration,
+      distance: distance ?? this.distance,
+      calories: calories ?? this.calories,
+      elevationGain: elevationGain ?? this.elevationGain,
+      startLocation: startLocation ?? this.startLocation,
+      endLocation: endLocation ?? this.endLocation,
+      mapSnapshotUrl: mapSnapshotUrl ?? this.mapSnapshotUrl,
+      messageCount: messageCount ?? this.messageCount,
+      coordinatesJson: coordinatesJson ?? this.coordinatesJson,
+    );
+  }
 }

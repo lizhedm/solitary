@@ -105,11 +105,32 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
                         if (!url.startsWith('http')) {
                           url = 'http://114.55.148.245:8000$url';
                         }
-                        return CachedNetworkImage(
-                          imageUrl: url,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) => Container(color: Colors.grey[200]),
-                          errorWidget: (context, url, error) => const Icon(Icons.error),
+                        return GestureDetector(
+                          onTap: () {
+                            // Prepare full URLs for viewer
+                            final fullUrls = photos.map((p) {
+                              if (!p.startsWith('http')) {
+                                return 'http://114.55.148.245:8000$p';
+                              }
+                              return p;
+                            }).toList();
+                            
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => ImageViewerPage(
+                                  imageUrls: fullUrls,
+                                  initialIndex: index,
+                                ),
+                              ),
+                            );
+                          },
+                          child: CachedNetworkImage(
+                            imageUrl: url,
+                            fit: BoxFit.cover,
+                            placeholder: (context, url) => Container(color: Colors.grey[200]),
+                            errorWidget: (context, url, error) => const Icon(Icons.error),
+                          ),
                         );
                       },
                     ),
@@ -266,6 +287,110 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
         Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
         Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
       ],
+    );
+  }
+}
+
+class ImageViewerPage extends StatefulWidget {
+  final List<String> imageUrls;
+  final int initialIndex;
+
+  const ImageViewerPage({
+    super.key,
+    required this.imageUrls,
+    this.initialIndex = 0,
+  });
+
+  @override
+  State<ImageViewerPage> createState() => _ImageViewerPageState();
+}
+
+class _ImageViewerPageState extends State<ImageViewerPage> {
+  late int _currentIndex;
+  late PageController _pageController;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: widget.initialIndex);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          PageView.builder(
+            controller: _pageController,
+            physics: const BouncingScrollPhysics(),
+            itemCount: widget.imageUrls.length,
+            onPageChanged: (index) {
+              setState(() {
+                _currentIndex = index;
+              });
+            },
+            itemBuilder: (context, index) {
+              return InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 4.0,
+                child: Center(
+                  child: CachedNetworkImage(
+                    imageUrl: widget.imageUrls[index],
+                    fit: BoxFit.contain,
+                    placeholder: (context, url) => const Center(
+                      child: SizedBox(
+                        width: 30,
+                        height: 30,
+                        child: CircularProgressIndicator(color: Colors.white),
+                      ),
+                    ),
+                    errorWidget: (context, url, error) => const Icon(Icons.error, color: Colors.white, size: 50),
+                  ),
+                ),
+              );
+            },
+          ),
+          
+          // Close button
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 16,
+            left: 16,
+            child: GestureDetector(
+              onTap: () => Navigator.pop(context),
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.5),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.close, color: Colors.white, size: 24),
+              ),
+            ),
+          ),
+          
+          // Counter
+          Positioned(
+            bottom: 32,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  "${_currentIndex + 1} / ${widget.imageUrls.length}",
+                  style: const TextStyle(color: Colors.white, fontSize: 16),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
