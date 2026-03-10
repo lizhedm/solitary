@@ -63,9 +63,14 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
 
     // Parse photos
     List<String> photos = [];
-    if (feedback['photos'] != null && feedback['photos'].toString().isNotEmpty) {
+    final rawPhotos = feedback['photos'];
+    if (rawPhotos != null) {
       try {
-        photos = List<String>.from(jsonDecode(feedback['photos']));
+        if (rawPhotos is String && rawPhotos.isNotEmpty) {
+           photos = List<String>.from(jsonDecode(rawPhotos));
+        } else if (rawPhotos is List) {
+           photos = List<String>.from(rawPhotos);
+        }
       } catch (e) {
         // ignore error
       }

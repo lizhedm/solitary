@@ -105,6 +105,9 @@ class _HikingMapPageState extends State<HikingMapPage>
   // 筛选条件
   int _feedbackDays = 3; // 默认最近3天
   int _minConfirms = 0; // 默认不过滤点赞数
+  
+  // 是否已加载初始数据
+  bool _initialDataLoaded = false;
 
   // 缓存标记
   final Map<int, Marker> _feedbackMarkersCache = {};
@@ -439,7 +442,8 @@ class _HikingMapPageState extends State<HikingMapPage>
     }
     
     // 首次定位成功后，加载一次周边路况
-    if (_isInitializing) {
+    if (!_initialDataLoaded) {
+       _initialDataLoaded = true;
        _loadFeedbacksAndSOS(center: location.latLng);
     }
   }
@@ -1196,9 +1200,13 @@ class _HikingMapPageState extends State<HikingMapPage>
                 secondary: const Icon(Icons.comment, color: Colors.blue),
                 value: _showFeedbacks,
                 onChanged: (val) {
+                  // Update local state for UI update
                   setState(() => _showFeedbacks = val);
-                  this.setState(() => _showFeedbacks = val); // Update parent state
-                  _refreshMapMarkers();
+                  // Update parent state and refresh map
+                  this.setState(() {
+                    _showFeedbacks = val;
+                    _refreshMapMarkers();
+                  });
                 },
               ),
               
@@ -1222,9 +1230,13 @@ class _HikingMapPageState extends State<HikingMapPage>
                         ],
                         onChanged: (val) {
                           if (val != null) {
+                            // Update local state
                             setState(() => _feedbackDays = val);
-                            this.setState(() => _feedbackDays = val);
-                            _refreshMapMarkers();
+                            // Update parent state and refresh map
+                            this.setState(() {
+                              _feedbackDays = val;
+                              _refreshMapMarkers();
+                            });
                           }
                         },
                       ),
@@ -1245,9 +1257,13 @@ class _HikingMapPageState extends State<HikingMapPage>
                         ],
                         onChanged: (val) {
                           if (val != null) {
+                            // Update local state
                             setState(() => _minConfirms = val);
-                            this.setState(() => _minConfirms = val);
-                            _refreshMapMarkers();
+                            // Update parent state and refresh map
+                            this.setState(() {
+                              _minConfirms = val;
+                              _refreshMapMarkers();
+                            });
                           }
                         },
                       ),
@@ -1264,9 +1280,13 @@ class _HikingMapPageState extends State<HikingMapPage>
                 secondary: const Icon(Icons.warning, color: Colors.red),
                 value: _showSOS,
                 onChanged: (val) {
+                  // Update local state
                   setState(() => _showSOS = val);
-                  this.setState(() => _showSOS = val);
-                  _refreshMapMarkers();
+                  // Update parent state and refresh map
+                  this.setState(() {
+                    _showSOS = val;
+                    _refreshMapMarkers();
+                  });
                 },
               ),
             ],
@@ -1293,8 +1313,8 @@ class _HikingMapPageState extends State<HikingMapPage>
     if (targetPos == null) return;
     
     // 计算当前可见范围（这里简单模拟，实际可以使用地图的bounds）
-    // 假设范围是当前位置周边 10km (~0.1度)
-    final double range = 0.1;
+    // 扩大搜索范围，确保能看到演示数据 (北京到周边)
+    final double range = 2.0; // ~200km
     final minLat = targetPos.latitude - range;
     final maxLat = targetPos.latitude + range;
     final minLng = targetPos.longitude - range;
@@ -1351,27 +1371,31 @@ class _HikingMapPageState extends State<HikingMapPage>
   Future<void> _updateFeedbackMarkers(List<dynamic> feedbacks) async {
     _feedbackMarkersCache.clear();
     for (var item in feedbacks) {
-      final id = item['id'];
-      final lat = item['latitude'];
-      final lng = item['longitude'];
-      final type = item['type'];
-      
-      // 根据类型选择图标颜色
-      Color color = Colors.grey;
-      IconData iconData = Icons.info;
-      if (type == 'blocked') { color = Colors.red; iconData = Icons.block; }
-      else if (type == 'weather') { color = Colors.blue; iconData = Icons.cloud; }
-      else if (type == 'supply') { color = Colors.purple; iconData = Icons.store; }
-      else if (type == 'danger') { color = Colors.deepOrange; iconData = Icons.warning; }
-      
-      final iconBytes = await _createIconMarkerBytes(iconData, color);
-      
-      _feedbackMarkersCache[id] = Marker(
-        position: LatLng(lat, lng),
-        icon: BitmapDescriptor.fromBytes(iconBytes),
-        onTap: (markerId) => _showMarkerInfoCard(item, isSOS: false),
-        zIndex: 80,
-      );
+      try {
+        final id = item['id'];
+        final lat = item['latitude'];
+        final lng = item['longitude'];
+        final type = item['type'];
+        
+        // 根据类型选择图标颜色
+        Color color = Colors.grey;
+        IconData iconData = Icons.info;
+        if (type == 'blocked') { color = Colors.red; iconData = Icons.block; }
+        else if (type == 'weather') { color = Colors.blue; iconData = Icons.cloud; }
+        else if (type == 'supply') { color = Colors.purple; iconData = Icons.store; }
+        else if (type == 'danger') { color = Colors.deepOrange; iconData = Icons.warning; }
+        
+        final iconBytes = await _createIconMarkerBytes(iconData, color);
+        
+        _feedbackMarkersCache[id] = Marker(
+          position: LatLng(lat, lng),
+          icon: BitmapDescriptor.fromBytes(iconBytes),
+          onTap: (markerId) => _showMarkerInfoCard(item, isSOS: false),
+          zIndex: 80,
+        );
+      } catch (e) {
+        debugPrint('Error creating feedback marker: $e');
+      }
     }
   }
 
@@ -1379,18 +1403,22 @@ class _HikingMapPageState extends State<HikingMapPage>
   Future<void> _updateSOSMarkers(List<dynamic> alerts) async {
     _sosMarkersCache.clear();
     for (var item in alerts) {
-      final id = item['id'];
-      final lat = item['latitude'];
-      final lng = item['longitude'];
-      
-      final iconBytes = await _createIconMarkerBytes(Icons.sos, Colors.red, isPulse: true);
-      
-      _sosMarkersCache[id] = Marker(
-        position: LatLng(lat, lng),
-        icon: BitmapDescriptor.fromBytes(iconBytes),
-        onTap: (markerId) => _showMarkerInfoCard(item, isSOS: true),
-        zIndex: 100, // SOS 最顶层
-      );
+      try {
+        final id = item['id'];
+        final lat = item['latitude'];
+        final lng = item['longitude'];
+        
+        final iconBytes = await _createIconMarkerBytes(Icons.sos, Colors.red, isPulse: true);
+        
+        _sosMarkersCache[id] = Marker(
+          position: LatLng(lat, lng),
+          icon: BitmapDescriptor.fromBytes(iconBytes),
+          onTap: (markerId) => _showMarkerInfoCard(item, isSOS: true),
+          zIndex: 100, // SOS 最顶层
+        );
+      } catch (e) {
+        debugPrint('Error creating SOS marker: $e');
+      }
     }
   }
 
@@ -1417,22 +1445,28 @@ class _HikingMapPageState extends State<HikingMapPage>
       ..strokeWidth = 4;
     canvas.drawCircle(center, dSize / 2 - 2, borderPaint);
 
-    // 绘制图标 (简化版，实际可能需要加载图片资源)
-    // 这里用文字代替图标，或者需要引入 icon font 转 image 的逻辑
-    // 为简单起见，画一个圆点或首字母
-    final textPainter = TextPainter(
-      text: TextSpan(
-        text: String.fromCharCode(icon.codePoint),
-        style: TextStyle(
-          fontSize: 40,
-          fontFamily: icon.fontFamily,
-          color: Colors.white,
+    // 绘制图标
+    try {
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: String.fromCharCode(icon.codePoint),
+          style: TextStyle(
+            fontSize: 40,
+            fontFamily: icon.fontFamily,
+            package: icon.fontPackage, 
+            color: Colors.white,
+          ),
         ),
-      ),
-      textDirection: TextDirection.ltr,
-    );
-    textPainter.layout();
-    textPainter.paint(canvas, Offset((dSize - textPainter.width) / 2, (dSize - textPainter.height) / 2));
+        textDirection: TextDirection.ltr,
+      );
+      textPainter.layout();
+      textPainter.paint(canvas, Offset((dSize - textPainter.width) / 2, (dSize - textPainter.height) / 2));
+    } catch (e) {
+      debugPrint('Error painting icon: $e');
+      // Fallback: 绘制一个简单的白色圆点
+      final dotPaint = Paint()..color = Colors.white;
+      canvas.drawCircle(center, 6, dotPaint);
+    }
 
     final picture = recorder.endRecording();
     final img = await picture.toImage(size, size);
@@ -1442,6 +1476,29 @@ class _HikingMapPageState extends State<HikingMapPage>
 
   // 显示标记信息卡片
   void _showMarkerInfoCard(Map<String, dynamic> data, {required bool isSOS}) {
+    // 定义类型映射，用于显示中文标签和颜色
+    final typeMap = {
+      'blocked': {'label': '道路阻断', 'color': Colors.red, 'icon': Icons.block},
+      'detour': {'label': '建议绕行', 'color': Colors.orange, 'icon': Icons.alt_route},
+      'weather': {'label': '天气变化', 'color': Colors.blue, 'icon': Icons.cloud},
+      'water': {'label': '水源位置', 'color': Colors.cyan, 'icon': Icons.water_drop},
+      'campsite': {'label': '推荐营地', 'color': Colors.green, 'icon': Icons.nights_stay},
+      'danger': {'label': '危险区域', 'color': Colors.deepOrange, 'icon': Icons.warning},
+      'supply': {'label': '有补给点', 'color': Colors.purple, 'icon': Icons.store},
+      'sos': {'label': '紧急求助', 'color': Colors.red, 'icon': Icons.warning},
+      'other': {'label': '其他信息', 'color': Colors.grey, 'icon': Icons.more_horiz},
+    };
+
+    String typeStr = data['type'] as String? ?? 'other';
+    if (isSOS) {
+       typeStr = 'sos';
+    }
+    
+    final typeInfo = typeMap[typeStr] ?? typeMap['other']!;
+    final color = typeInfo['color'] as Color;
+    final label = typeInfo['label'] as String;
+    final icon = typeInfo['icon'] as IconData;
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -1457,18 +1514,40 @@ class _HikingMapPageState extends State<HikingMapPage>
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: CircleAvatar(
-                backgroundColor: isSOS ? Colors.red.withOpacity(0.1) : Colors.blue.withOpacity(0.1),
-                child: Icon(
-                  isSOS ? Icons.warning : Icons.info,
-                  color: isSOS ? Colors.red : Colors.blue,
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.1),
+                  shape: BoxShape.circle,
                 ),
+                child: Icon(icon, color: color),
               ),
-              title: Text(isSOS ? '紧急求助' : (data['type'] ?? '路况信息')),
-              subtitle: Text(
-                data['content'] ?? data['message'] ?? '无内容',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+              title: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: color,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      label,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              subtitle: Padding(
+                padding: const EdgeInsets.only(top: 8.0),
+                child: Text(
+                  data['content'] ?? data['message'] ?? '无内容',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
               trailing: IconButton(
                 icon: const Icon(Icons.close),
