@@ -1706,10 +1706,20 @@ class _HikingMapPageState extends State<HikingMapPage>
         }),
         const SizedBox(height: 12),
         _buildToolButton(Icons.help_outline, '求助', () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const AskQuestionPage()),
-          );
+          if (_position != null) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => AskQuestionPage(
+                latitude: _position!.latitude,
+                longitude: _position!.longitude,
+              )),
+            );
+          } else {
+             Navigator.push(
+               context,
+               MaterialPageRoute(builder: (context) => const AskQuestionPage()),
+             );
+          }
         }),
       ],
     );

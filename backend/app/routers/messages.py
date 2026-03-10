@@ -60,6 +60,156 @@ class FeedbackOut(FeedbackCreate):
 
 # --- Message Endpoints ---
 
+import math
+
+# ... existing code ...
+
+class AskQuestionRequest(BaseModel):
+    content: str
+    latitude: float
+    longitude: float
+
+class QuestionBroadcastOut(BaseModel):
+    question_messages: List[MessageOut]
+    recipient_count: int
+
+# ... existing code ...
+
+def calculate_distance(lat1, lon1, lat2, lon2):
+    """
+    Haversine formula to calculate distance between two points in km
+    Reuse from hiking.py or duplicate here to avoid circular imports if hiking imports messages
+    """
+    R = 6371  # Earth radius in km
+    dLat = math.radians(lat2 - lat1)
+    dLon = math.radians(lon2 - lon1)
+    a = math.sin(dLat/2) * math.sin(dLat/2) + \
+        math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * \
+        math.sin(dLon/2) * math.sin(dLon/2)
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return R * c
+
+@router.post("/messages/ask", response_model=QuestionBroadcastOut)
+def ask_question(
+    req: AskQuestionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    向周围人提问接口
+    逻辑：
+    1. 寻找10km内最近的3个活跃用户（is_hiking=True）
+    2. 如果活跃用户不足3个，则补充寻找历史用户（最近发过路况或求助的）
+       - 范围：10km
+       - 排序：按发布时间倒序
+       - 数量：5个
+    3. 给所有目标用户发送消息（类型为 'question'）
+    """
+    
+    targets = {} # user_id -> User object
+    
+    # 1. Find Active Users (10km)
+    active_users = db.query(User).filter(
+        User.id != current_user.id,
+        User.is_hiking == True,
+        User.current_lat != None,
+        User.current_lng != None
+    ).all()
+    
+    active_candidates = []
+    for user in active_users:
+        dist = calculate_distance(req.latitude, req.longitude, user.current_lat, user.current_lng)
+        if dist <= 10.0:
+            active_candidates.append((dist, user))
+            
+    # Sort by distance and take top 3
+    active_candidates.sort(key=lambda x: x[0])
+    top_active = active_candidates[:3]
+    
+    for _, user in top_active:
+        targets[user.id] = user
+        
+    # 2. If fewer than 3, find historical contributors
+    if len(targets) < 3:
+        # Find users from Feedbacks
+        recent_feedbacks = db.query(Feedback).filter(
+            Feedback.user_id != current_user.id,
+            Feedback.latitude >= req.latitude - 0.1, # Approx 10km box optimization
+            Feedback.latitude <= req.latitude + 0.1,
+            Feedback.longitude >= req.longitude - 0.1,
+            Feedback.longitude <= req.longitude + 0.1
+        ).order_by(Feedback.created_at.desc()).limit(20).all()
+        
+        # Find users from SOS
+        recent_sos = db.query(SOSAlert).filter(
+            SOSAlert.user_id != current_user.id,
+            SOSAlert.latitude >= req.latitude - 0.1,
+            SOSAlert.latitude <= req.latitude + 0.1,
+            SOSAlert.longitude >= req.longitude - 0.1,
+            SOSAlert.longitude <= req.longitude + 0.1
+        ).order_by(SOSAlert.created_at.desc()).limit(20).all()
+        
+        # Merge and check precise distance
+        historical_candidates = []
+        seen_users = set()
+        
+        # Helper to process historical items
+        def process_items(items):
+            for item in items:
+                if item.user_id in targets or item.user_id in seen_users:
+                    continue
+                
+                # Check real distance
+                dist = calculate_distance(req.latitude, req.longitude, item.latitude, item.longitude)
+                if dist <= 10.0:
+                    seen_users.add(item.user_id)
+                    historical_candidates.append({
+                        'user_id': item.user_id,
+                        'time': item.created_at,
+                        'dist': dist
+                    })
+        
+        process_items(recent_feedbacks)
+        process_items(recent_sos)
+        
+        # Sort by time desc
+        historical_candidates.sort(key=lambda x: x['time'], reverse=True)
+        
+        # Take top 5
+        top_historical = historical_candidates[:5]
+        
+        for cand in top_historical:
+            user = db.query(User).filter(User.id == cand['user_id']).first()
+            if user:
+                targets[user.id] = user
+
+    # 3. Create Messages
+    created_messages = []
+    timestamp = int(time.time() * 1000)
+    
+    for target_id, target_user in targets.items():
+        msg = Message(
+            sender_id=current_user.id,
+            receiver_id=target_id,
+            content=req.content,
+            type='question', # Special type
+            timestamp=timestamp,
+            is_read=False
+        )
+        db.add(msg)
+        created_messages.append(msg)
+        
+    db.commit()
+    
+    # Refresh to get IDs
+    for msg in created_messages:
+        db.refresh(msg)
+        
+    return {
+        "question_messages": created_messages,
+        "recipient_count": len(created_messages)
+    }
+
 @router.post("/messages", response_model=MessageOut)
 def send_message(
     msg: MessageCreate,

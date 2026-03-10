@@ -215,10 +215,161 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
   }
 
   Widget _buildTemporaryList() {
-    return _buildEmptyState(
-      '暂无临时会话',
-      '这里会显示附近的徒步者的临时消息。\n当你在地图上向陌生人打招呼时，会话会出现在这里。',
-      Icons.people_outline,
+    return Consumer<MessageProvider>(
+      builder: (context, provider, child) {
+        // Group messages by type='question' and senderId=me to find "My Questions"
+        final authProvider = Provider.of<AuthProvider>(context, listen: false);
+        final currentUserId = authProvider.user?.id;
+        
+        if (currentUserId == null) return const Center(child: Text('请先登录'));
+        
+        // Use FutureBuilder because we need to query DB for specific message types
+        return FutureBuilder<List<Map<String, dynamic>>>(
+          future: DatabaseHelper().database.then((db) async {
+            // 1. Find my questions (grouped by content/time approx)
+            // This is a bit tricky with simple SQL, let's fetch all 'question' type messages sent by me
+            final myQuestions = await db.query(
+              'messages',
+              where: 'sender_id = ? AND type = ?',
+              whereArgs: [currentUserId, 'question'],
+              orderBy: 'timestamp DESC'
+            );
+            
+            // Group by content (assuming content is unique enough for this MVP)
+            final Map<String, Map<String, dynamic>> groupedQuestions = {};
+            for (var msg in myQuestions) {
+              final content = msg['content'] as String;
+              if (!groupedQuestions.containsKey(content)) {
+                groupedQuestions[content] = {
+                  'content': content,
+                  'timestamp': msg['timestamp'],
+                  'recipients': <int>[],
+                  'reply_count': 0
+                };
+              }
+              groupedQuestions[content]!['recipients'].add(msg['receiver_id']);
+              // Check if there are replies from this receiver?
+              // That would require querying messages where sender=receiver_id and type='text' (reply)
+            }
+            
+            // 2. Find incoming questions (someone asked me)
+            // Group by sender_id
+            final incomingQuestions = await db.query(
+              'messages',
+              where: 'receiver_id = ? AND type = ?',
+              whereArgs: [currentUserId, 'question'],
+              orderBy: 'timestamp DESC'
+            );
+            
+            final Map<int, Map<String, dynamic>> incomingMap = {};
+            for (var msg in incomingQuestions) {
+              final senderId = msg['sender_id'] as int;
+              if (!incomingMap.containsKey(senderId)) {
+                // Get sender info (try contact or placeholder)
+                // In real app we should fetch user info if not exists
+                incomingMap[senderId] = {
+                  'sender_id': senderId,
+                  'content': msg['content'],
+                  'timestamp': msg['timestamp'],
+                  'is_incoming': true
+                };
+              }
+            }
+            
+            final List<Map<String, dynamic>> combined = [];
+            combined.addAll(groupedQuestions.values);
+            combined.addAll(incomingMap.values);
+            
+            // Sort by timestamp
+            combined.sort((a, b) => (b['timestamp'] as int).compareTo(a['timestamp'] as int));
+            
+            return combined;
+          }),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData || snapshot.data!.isEmpty) {
+              return _buildEmptyState(
+                '暂无临时会话',
+                '这里显示附近的临时消息。\n当你在地图上向陌生人打招呼时，会话会出现在这里。',
+                Icons.people_outline,
+              );
+            }
+            
+            final items = snapshot.data!;
+            
+            return ListView.builder(
+              itemCount: items.length,
+              itemBuilder: (context, index) {
+                final item = items[index];
+                
+                // 1. My Question (Group)
+                if (item['is_incoming'] != true) {
+                   final recipientCount = (item['recipients'] as List).length;
+                   return Card(
+                    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    color: Colors.blue.shade50,
+                    child: ListTile(
+                      leading: const CircleAvatar(
+                        backgroundColor: Colors.blue,
+                        child: Icon(Icons.help, color: Colors.white),
+                      ),
+                      title: Text('我的提问: ${item['content']}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(
+                        '发送给 $recipientCount 位用户 • ${_formatTime(item['timestamp'])}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => QuestionRepliesPage(
+                              question: item['content'],
+                              recipientCount: recipientCount,
+                              recipientIds: (item['recipients'] as List).cast<int>(),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                } 
+                
+                // 2. Incoming Question (Single Chat)
+                else {
+                   final senderId = item['sender_id'] as int;
+                   return Card(
+                    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: Colors.orange.shade100,
+                        child: const Icon(Icons.person, color: Colors.orange),
+                      ),
+                      title: Text('收到提问: ${item['content']}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(
+                        '来自用户 $senderId • ${_formatTime(item['timestamp'])}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      trailing: const Icon(Icons.chat),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => ChatPage(
+                              title: '用户 $senderId', // Should fetch real nickname
+                              avatar: '',
+                              partnerId: senderId,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                }
+              },
+            );
+          },
+        );
+      },
     );
   }
 
