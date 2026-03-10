@@ -22,7 +22,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -90,7 +90,8 @@ class DatabaseHelper {
         status TEXT DEFAULT 'ACTIVE',
         view_count INTEGER DEFAULT 0,
         confirm_count INTEGER DEFAULT 0,
-        sync_status INTEGER DEFAULT 0
+        sync_status INTEGER DEFAULT 0,
+        user_name TEXT
       )
     ''');
     
@@ -118,9 +119,20 @@ class DatabaseHelper {
           status TEXT DEFAULT 'ACTIVE',
           view_count INTEGER DEFAULT 0,
           confirm_count INTEGER DEFAULT 0,
-          sync_status INTEGER DEFAULT 0
+          sync_status INTEGER DEFAULT 0,
+          user_name TEXT
         )
       ''');
+    }
+    if (oldVersion < 4) {
+      // Add user_name column to feedbacks table if it doesn't exist
+      // Since SQLite doesn't support IF NOT EXISTS for ADD COLUMN in all versions easily,
+      // we just try to add it.
+      try {
+        await db.execute('ALTER TABLE feedbacks ADD COLUMN user_name TEXT');
+      } catch (e) {
+        debugPrint('Error adding user_name column: $e');
+      }
     }
   }
   

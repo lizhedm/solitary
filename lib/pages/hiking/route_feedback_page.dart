@@ -13,7 +13,10 @@ import '../../services/api_service.dart';
 import '../../providers/auth_provider.dart';
 
 class RouteFeedbackPage extends StatefulWidget {
-  const RouteFeedbackPage({super.key});
+  final double? latitude;
+  final double? longitude;
+
+  const RouteFeedbackPage({super.key, this.latitude, this.longitude});
 
   @override
   State<RouteFeedbackPage> createState() => _RouteFeedbackPageState();
@@ -168,20 +171,27 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
       }
 
       // 1. Get Location
-      Position position;
-      try {
-        position = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high,
-          timeLimit: const Duration(seconds: 10),
-        );
-      } catch (e) {
-        // Fallback or error
-        debugPrint('Location error: $e');
-        ScaffoldMessenger.of(context).showSnackBar(
-           const SnackBar(content: Text('无法获取当前位置，请确保定位权限已开启')),
-        );
-        setState(() => _isSubmitting = false);
-        return;
+      double lat, lng;
+      if (widget.latitude != null && widget.longitude != null) {
+         lat = widget.latitude!;
+         lng = widget.longitude!;
+      } else {
+        // Fallback to get current location if not passed
+        try {
+          Position position = await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.high,
+            timeLimit: const Duration(seconds: 10),
+          );
+          lat = position.latitude;
+          lng = position.longitude;
+        } catch (e) {
+          debugPrint('Location error: $e');
+          ScaffoldMessenger.of(context).showSnackBar(
+             const SnackBar(content: Text('无法获取当前位置，请确保定位权限已开启')),
+          );
+          setState(() => _isSubmitting = false);
+          return;
+        }
       }
 
       // 2. Upload Photos (if any)
@@ -216,13 +226,14 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
         'user_id': userId,
         'type': _selectedType,
         'content': _descriptionController.text,
-        'latitude': position.latitude,
-        'longitude': position.longitude,
+        'latitude': lat,
+        'longitude': lng,
         'address': 'Unknown', // Could use geocoding if needed
         'photos': jsonEncode(photoUrls),
         'created_at': DateTime.now().millisecondsSinceEpoch,
         'status': 'ACTIVE',
         'sync_status': 1, // Pending
+        'user_name': authProvider.user?.nickname ?? 'Unknown', // Add username
       };
 
       // 4. Save to Local DB
@@ -234,8 +245,8 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
         final apiPayload = {
           'type': _selectedType,
           'content': _descriptionController.text,
-          'latitude': position.latitude,
-          'longitude': position.longitude,
+          'latitude': lat,
+          'longitude': lng,
           'address': 'Unknown',
           'photos': photoUrls,
           'created_at': feedbackData['created_at'],

@@ -182,6 +182,27 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 16),
+                  
+                  // User Info
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 12,
+                        backgroundColor: Colors.grey[200],
+                        child: Icon(Icons.person, size: 16, color: Colors.grey[400]),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        feedback['user_name'] ?? '匿名用户',
+                        style: const TextStyle(
+                          color: Colors.black87,
+                          fontWeight: FontWeight.w500,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 20),
                   
                   // Content

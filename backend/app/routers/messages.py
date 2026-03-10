@@ -49,6 +49,7 @@ class FeedbackCreate(BaseModel):
 class FeedbackOut(FeedbackCreate):
     id: int
     user_id: int
+    user_name: Optional[str] = None
     status: str
     view_count: int
     confirm_count: int
@@ -175,6 +176,7 @@ def mark_messages_read(
 class SOSOut(BaseModel):
     id: int
     user_id: int
+    user_name: Optional[str] = None
     latitude: float
     longitude: float
     message: str
@@ -209,7 +211,10 @@ def create_sos(
     db.add(db_sos)
     db.commit()
     db.refresh(db_sos)
-    return db_sos
+    
+    out = SOSOut.from_orm(db_sos)
+    out.user_name = current_user.nickname
+    return out
 
 @router.get("/messages/sos", response_model=List[SOSOut])
 def get_sos_in_bounds(
@@ -226,7 +231,14 @@ def get_sos_in_bounds(
         SOSAlert.longitude <= max_lng,
         SOSAlert.status == 'ACTIVE'
     )
-    return query.all()
+    alerts = query.all()
+    results = []
+    for a in alerts:
+        out = SOSOut.from_orm(a)
+        if a.user:
+            out.user_name = a.user.nickname
+        results.append(out)
+    return results
 
 def create_feedback(
     feedback: FeedbackCreate, 
@@ -255,7 +267,10 @@ def create_feedback(
             db_feedback.photos = json.loads(db_feedback.photos)
         except:
             db_feedback.photos = []
-    return db_feedback
+            
+    out = FeedbackOut.from_orm(db_feedback)
+    out.user_name = current_user.nickname
+    return out
 
 @router.post("/messages/feedback", response_model=FeedbackOut)
 def create_feedback_endpoint(
@@ -291,6 +306,7 @@ def get_feedbacks_in_bounds(
         query = query.filter(Feedback.confirm_count >= min_confirms)
         
     feedbacks = query.all()
+    results = []
     
     # Manual conversion of photos from JSON string to list
     for f in feedbacks:
@@ -299,7 +315,13 @@ def get_feedbacks_in_bounds(
                 f.photos = json.loads(f.photos)
             except:
                 f.photos = []
-    return feedbacks
+        
+        out = FeedbackOut.from_orm(f)
+        if f.user:
+            out.user_name = f.user.nickname
+        results.append(out)
+            
+    return results
 
 @router.get("/messages/feedback/my", response_model=List[FeedbackOut])
 def get_my_feedbacks(
@@ -307,6 +329,7 @@ def get_my_feedbacks(
     current_user: User = Depends(get_current_user)
 ):
     feedbacks = db.query(Feedback).filter(Feedback.user_id == current_user.id).all()
+    results = []
     # Manual conversion of photos from JSON string to list
     for f in feedbacks:
         if f.photos and isinstance(f.photos, str):
@@ -314,4 +337,9 @@ def get_my_feedbacks(
                 f.photos = json.loads(f.photos)
             except:
                 f.photos = []
-    return feedbacks
+        
+        out = FeedbackOut.from_orm(f)
+        out.user_name = current_user.nickname
+        results.append(out)
+            
+    return results

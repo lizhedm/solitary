@@ -166,15 +166,27 @@ class _HikingMapPageState extends State<HikingMapPage>
     }
   }
 
+  // Z-Index Constants
+  static const double Z_INDEX_START = 50;
+  static const double Z_INDEX_END = 60;
+  static const double Z_INDEX_FEEDBACK = 80;
+  static const double Z_INDEX_NEARBY = 90;
+  static const double Z_INDEX_CURRENT_USER = 100;
+  static const double Z_INDEX_SOS = 110;
+
   // 缓存头像标记，避免重复生成
   final Map<int, BitmapDescriptor> _avatarCache = {};
   // 缓存当前的周围用户标记，用于持久显示
   final Map<int, Marker> _nearbyMarkersCache = {};
 
   void _updateMapMarkers() async {
-    // 1. 获取所有非周围用户的标记（Start, End, Current User等）
-    // 我们可以假设所有 zIndex != 90 的标记都是非周围用户标记
-    final nonNearbyMarkers = _markers.where((m) => m.zIndex != 90).toSet();
+    // 1. 获取所有静态标记（Start, End, Current User等）
+    // 移除所有动态管理的标记 (Feedback, Nearby, SOS) 以便重新添加
+    final staticMarkers = _markers.where((m) {
+      return m.zIndex != Z_INDEX_FEEDBACK && 
+             m.zIndex != Z_INDEX_NEARBY && 
+             m.zIndex != Z_INDEX_SOS;
+    }).toSet();
     
     // 2. 更新周围用户标记缓存
     // 获取当前接口返回的所有用户ID集合
@@ -219,12 +231,10 @@ class _HikingMapPageState extends State<HikingMapPage>
                         icon: loadedIcon,
                         anchor: const Offset(0.5, 0.5),
                         infoWindow: InfoWindow(title: user['nickname']),
-                        zIndex: 90,
+                        zIndex: Z_INDEX_NEARBY,
                      );
                      // 触发UI刷新
-                     setState(() {
-                        _markers = {...nonNearbyMarkers, ..._nearbyMarkersCache.values};
-                     });
+                     _updateMapMarkers();
                   }
                 });
               }
@@ -238,15 +248,15 @@ class _HikingMapPageState extends State<HikingMapPage>
         icon: icon, // 这里使用 icon (可能是默认的，也可能是缓存的真实头像)
         anchor: const Offset(0.5, 0.5),
         infoWindow: InfoWindow(title: user['nickname']),
-        zIndex: 90,
+        zIndex: Z_INDEX_NEARBY,
       );
     }
 
     if (mounted) {
       setState(() {
-        // 合并 非周围用户标记 和 最新的周围用户标记
+        // 合并 静态标记 和 所有动态标记缓存
         _markers = {
-           ...nonNearbyMarkers, 
+           ...staticMarkers, 
            ..._nearbyMarkersCache.values,
            ..._feedbackMarkersCache.values,
            ..._sosMarkersCache.values,
@@ -629,10 +639,10 @@ class _HikingMapPageState extends State<HikingMapPage>
       }
       if (mounted) {
         setState(() {
-          // 仅移除当前用户的标记（通过zIndex=100识别）
+          // 仅移除当前用户的标记（通过zIndex=Z_INDEX_CURRENT_USER识别）
           // 之前的逻辑是根据anchor移除，这会错误地移除周围用户（也是0.5,0.5）
           _markers.removeWhere(
-            (marker) => marker.zIndex == 100,
+            (marker) => marker.zIndex == Z_INDEX_CURRENT_USER,
           );
           // 添加新的头像标记
           _markers.add(
@@ -640,7 +650,7 @@ class _HikingMapPageState extends State<HikingMapPage>
               position: position,
               icon: descriptor!,
               anchor: const Offset(0.5, 0.5),
-              zIndex: 100, // 当前用户标记具有最高层级
+              zIndex: Z_INDEX_CURRENT_USER, // 当前用户标记具有最高层级
             ),
           );
         });
@@ -672,7 +682,7 @@ class _HikingMapPageState extends State<HikingMapPage>
               position: position,
               icon: descriptor,
               anchor: const Offset(0.75, 0.5), // 与 Start 区分开
-              zIndex: 60,
+              zIndex: Z_INDEX_END,
             ),
           );
         });
@@ -762,7 +772,7 @@ class _HikingMapPageState extends State<HikingMapPage>
               position: position,
               icon: descriptor,
               anchor: const Offset(0.5, 0.5), // 中心对齐
-              zIndex: 50,
+              zIndex: Z_INDEX_START,
             ),
           );
         });
@@ -1181,7 +1191,7 @@ class _HikingMapPageState extends State<HikingMapPage>
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) => StatefulBuilder(
-        builder: (context, setState) => Container(
+        builder: (context, setModalState) => Container(
           decoration: const BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -1200,9 +1210,9 @@ class _HikingMapPageState extends State<HikingMapPage>
                 secondary: const Icon(Icons.comment, color: Colors.blue),
                 value: _showFeedbacks,
                 onChanged: (val) {
-                  // Update local state for UI update
-                  setState(() => _showFeedbacks = val);
-                  // Update parent state and refresh map
+                  // Update local state (modal)
+                  setModalState(() => _showFeedbacks = val);
+                  // Update parent state (map page)
                   this.setState(() {
                     _showFeedbacks = val;
                     _refreshMapMarkers();
@@ -1230,9 +1240,7 @@ class _HikingMapPageState extends State<HikingMapPage>
                         ],
                         onChanged: (val) {
                           if (val != null) {
-                            // Update local state
-                            setState(() => _feedbackDays = val);
-                            // Update parent state and refresh map
+                            setModalState(() => _feedbackDays = val);
                             this.setState(() {
                               _feedbackDays = val;
                               _refreshMapMarkers();
@@ -1257,9 +1265,7 @@ class _HikingMapPageState extends State<HikingMapPage>
                         ],
                         onChanged: (val) {
                           if (val != null) {
-                            // Update local state
-                            setState(() => _minConfirms = val);
-                            // Update parent state and refresh map
+                            setModalState(() => _minConfirms = val);
                             this.setState(() {
                               _minConfirms = val;
                               _refreshMapMarkers();
@@ -1280,9 +1286,7 @@ class _HikingMapPageState extends State<HikingMapPage>
                 secondary: const Icon(Icons.warning, color: Colors.red),
                 value: _showSOS,
                 onChanged: (val) {
-                  // Update local state
-                  setState(() => _showSOS = val);
-                  // Update parent state and refresh map
+                  setModalState(() => _showSOS = val);
                   this.setState(() {
                     _showSOS = val;
                     _refreshMapMarkers();
@@ -1391,7 +1395,7 @@ class _HikingMapPageState extends State<HikingMapPage>
           position: LatLng(lat, lng),
           icon: BitmapDescriptor.fromBytes(iconBytes),
           onTap: (markerId) => _showMarkerInfoCard(item, isSOS: false),
-          zIndex: 80,
+          zIndex: Z_INDEX_FEEDBACK,
         );
       } catch (e) {
         debugPrint('Error creating feedback marker: $e');
@@ -1414,7 +1418,7 @@ class _HikingMapPageState extends State<HikingMapPage>
           position: LatLng(lat, lng),
           icon: BitmapDescriptor.fromBytes(iconBytes),
           onTap: (markerId) => _showMarkerInfoCard(item, isSOS: true),
-          zIndex: 100, // SOS 最顶层
+          zIndex: Z_INDEX_SOS, // SOS 最顶层
         );
       } catch (e) {
         debugPrint('Error creating SOS marker: $e');
@@ -1594,10 +1598,21 @@ class _HikingMapPageState extends State<HikingMapPage>
         _buildToolButton(Icons.group, '队友', () {}, badgeCount: 3),
         const SizedBox(height: 12),
         _buildToolButton(Icons.add_comment, '路况', () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const RouteFeedbackPage()),
-          );
+          if (_position != null) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => RouteFeedbackPage(
+                latitude: _position!.latitude,
+                longitude: _position!.longitude,
+              )),
+            );
+          } else {
+             // If no location yet, maybe prompt or still push (page handles fallback)
+             Navigator.push(
+               context,
+               MaterialPageRoute(builder: (context) => const RouteFeedbackPage()),
+             );
+          }
         }),
         const SizedBox(height: 12),
         _buildToolButton(Icons.help_outline, '求助', () {
