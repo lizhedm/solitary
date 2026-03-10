@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, aliased
 from typing import List, Optional
 from app.database.database import get_db
-from app.models.message import Feedback, Message
+from app.models.message import Feedback, Message, SOSAlert
 from app.routers.auth import get_current_user
 from app.models.user import User
 from pydantic import BaseModel
@@ -171,7 +171,38 @@ def mark_messages_read(
     db.commit()
     return {"success": True}
 
-# --- Feedback Endpoints ---
+# --- SOS Models ---
+class SOSOut(BaseModel):
+    id: int
+    user_id: int
+    latitude: float
+    longitude: float
+    message: str
+    status: str
+    created_at: int
+    resolved_at: Optional[int]
+    
+    class Config:
+        from_attributes = True
+
+# --- SOS Endpoints (Placeholder for now, usually part of hiking or separate router, but putting here for map query) ---
+
+@router.get("/messages/sos", response_model=List[SOSOut])
+def get_sos_in_bounds(
+    min_lat: float,
+    max_lat: float,
+    min_lng: float,
+    max_lng: float,
+    db: Session = Depends(get_db)
+):
+    query = db.query(SOSAlert).filter(
+        SOSAlert.latitude >= min_lat,
+        SOSAlert.latitude <= max_lat,
+        SOSAlert.longitude >= min_lng,
+        SOSAlert.longitude <= max_lng,
+        SOSAlert.status == 'ACTIVE'
+    )
+    return query.all()
 
 def create_feedback(
     feedback: FeedbackCreate, 
@@ -209,6 +240,42 @@ def create_feedback_endpoint(
     current_user: User = Depends(get_current_user)
 ):
     return create_feedback(feedback, db, current_user)
+
+@router.get("/messages/feedbacks", response_model=List[FeedbackOut])
+def get_feedbacks_in_bounds(
+    min_lat: float,
+    max_lat: float,
+    min_lng: float,
+    max_lng: float,
+    days: Optional[int] = None,
+    min_confirms: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
+    query = db.query(Feedback).filter(
+        Feedback.latitude >= min_lat,
+        Feedback.latitude <= max_lat,
+        Feedback.longitude >= min_lng,
+        Feedback.longitude <= max_lng,
+        Feedback.status == 'ACTIVE'
+    )
+    
+    if days:
+        cutoff = int((time.time() - days * 86400) * 1000)
+        query = query.filter(Feedback.created_at >= cutoff)
+        
+    if min_confirms:
+        query = query.filter(Feedback.confirm_count >= min_confirms)
+        
+    feedbacks = query.all()
+    
+    # Manual conversion of photos from JSON string to list
+    for f in feedbacks:
+        if f.photos and isinstance(f.photos, str):
+            try:
+                f.photos = json.loads(f.photos)
+            except:
+                f.photos = []
+    return feedbacks
 
 @router.get("/messages/feedback/my", response_model=List[FeedbackOut])
 def get_my_feedbacks(

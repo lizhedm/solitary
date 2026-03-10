@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../models/message.dart';
@@ -88,6 +89,47 @@ class MessageProvider with ChangeNotifier {
     updatedContacts.sort((a, b) => (b.lastMessageTime ?? 0).compareTo(a.lastMessageTime ?? 0));
     _contacts = updatedContacts;
     notifyListeners();
+  }
+
+  // Feedback related
+  List<Map<String, dynamic>> _myFeedbacks = [];
+  List<Map<String, dynamic>> get myFeedbacks => _myFeedbacks;
+
+  Future<void> fetchMyFeedbacks(int currentUserId) async {
+    // 1. Load from local
+    final localFeedbacks = await DatabaseHelper().getFeedbacks(currentUserId);
+    _myFeedbacks = localFeedbacks;
+    notifyListeners();
+
+    // 2. Load from API
+    try {
+      final response = await _apiService.get('/messages/feedback/my');
+      if (response.statusCode == 200) {
+        final List<dynamic> data = response.data;
+        
+        for (var item in data) {
+           final feedbackData = Map<String, dynamic>.from(item);
+           // Map API response to local DB schema
+           feedbackData['remote_id'] = feedbackData['id'];
+           feedbackData.remove('id');
+           feedbackData['user_id'] = currentUserId;
+           feedbackData['sync_status'] = 0;
+           
+           // Handle photos list -> json string
+           if (feedbackData['photos'] is List) {
+             feedbackData['photos'] = jsonEncode(feedbackData['photos']);
+           }
+           
+           await DatabaseHelper().saveFeedback(feedbackData);
+        }
+        
+        // Refresh local list
+        _myFeedbacks = await DatabaseHelper().getFeedbacks(currentUserId);
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Fetch my feedbacks failed: $e');
+    }
   }
 
   Future<void> fetchNewMessages(int currentUserId) async {

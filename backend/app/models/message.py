@@ -39,3 +39,17 @@ class Feedback(Base):
     confirm_count = Column(Integer, default=0)
     
     user = relationship("User", back_populates="feedbacks")
+
+class SOSAlert(Base):
+    __tablename__ = "sos_alerts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    latitude = Column(Float)
+    longitude = Column(Float)
+    message = Column(String)
+    status = Column(String, default='ACTIVE') # ACTIVE, RESOLVED
+    created_at = Column(BigInteger)
+    resolved_at = Column(BigInteger, nullable=True)
+    
+    user = relationship("User")

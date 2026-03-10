@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:dio/dio.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import '../../services/database_helper.dart';
 import '../../services/api_service.dart';
 import '../../providers/auth_provider.dart';
@@ -63,6 +64,12 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
       'color': Colors.deepOrange,
     },
     {
+      'id': 'supply',
+      'icon': Icons.store,
+      'label': '有补给点',
+      'color': Colors.purple,
+    },
+    {
       'id': 'other',
       'icon': Icons.more_horiz,
       'label': '其他信息',
@@ -71,8 +78,30 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
   ];
 
   Future<void> _takePhoto() async {
-    if (_photos.length >= 2) return;
-    final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
+    if (_photos.length >= 3) return;
+    
+    // Show dialog to choose source
+    final source = await showDialog<ImageSource>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('选择图片'),
+        content: const Text('请选择图片来源'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, ImageSource.gallery),
+            child: const Text('相册'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, ImageSource.camera),
+            child: const Text('相机'),
+          ),
+        ],
+      ),
+    );
+
+    if (source == null) return;
+
+    final XFile? photo = await _picker.pickImage(source: source);
     if (photo != null) {
       setState(() {
         _photos.add(photo);
@@ -81,6 +110,50 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
   }
 
   bool _isSubmitting = false;
+
+  Future<List<int>> _compressImage(XFile file) async {
+    final originalBytes = await file.readAsBytes();
+    int sizeInBytes = originalBytes.length;
+    
+    // If smaller than 1MB, return original
+    if (sizeInBytes <= 1000000) {
+      return originalBytes;
+    }
+
+    if (kIsWeb) {
+       // Web doesn't support flutter_image_compress effectively in this way usually,
+       // but let's return original for web for now or implement web-specific compression.
+       // For simplicity, return original on web.
+       return originalBytes;
+    }
+
+    // Compress
+    List<int>? compressed;
+    int quality = 85;
+    
+    // Try compress
+    while (quality > 20) {
+      try {
+        final res = await FlutterImageCompress.compressWithList(
+          originalBytes,
+          quality: quality,
+          format: CompressFormat.jpeg,
+        );
+        
+        if (res.length <= 1000000) {
+          compressed = res;
+          break;
+        }
+        compressed = res; // keep best effort
+      } catch (e) {
+        debugPrint('Compression error: $e');
+        return originalBytes;
+      }
+      quality -= 15;
+    }
+    
+    return compressed ?? originalBytes;
+  }
 
   Future<void> _publishFeedback() async {
     if (_selectedType == null || _descriptionController.text.isEmpty) return;
@@ -116,11 +189,15 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
       if (_photos.isNotEmpty) {
         for (var photo in _photos) {
           try {
-            final bytes = await photo.readAsBytes();
+            final bytes = await _compressImage(photo);
+            
+            // Generate a filename
+            final filename = 'feedback_${DateTime.now().millisecondsSinceEpoch}_${photo.name}';
+            
             final formData = FormData.fromMap({
               'file': MultipartFile.fromBytes(
                 bytes,
-                filename: photo.name,
+                filename: filename,
               ),
             });
             // Reuse snapshot upload endpoint for now as it handles images
@@ -315,7 +392,7 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
                   height: 100,
                   child: ListView.separated(
                     scrollDirection: Axis.horizontal,
-                    itemCount: _photos.length + (_photos.length < 2 ? 1 : 0),
+                    itemCount: _photos.length + (_photos.length < 3 ? 1 : 0),
                     separatorBuilder: (_, __) => const SizedBox(width: 12),
                     itemBuilder: (context, index) {
                       if (index == _photos.length) {

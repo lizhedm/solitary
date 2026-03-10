@@ -24,14 +24,31 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     
+    // Add listener to refresh data when switching tabs
+    _tabController.addListener(() {
+      if (_tabController.index == 2 && !_tabController.indexIsChanging) {
+        _fetchMyFeedbacks();
+      }
+    });
+    
     // Start polling when page opens
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
       final msgProvider = Provider.of<MessageProvider>(context, listen: false);
       if (authProvider.user != null) {
         msgProvider.startPolling(authProvider.user!.id);
+        // Also fetch feedbacks initially
+        msgProvider.fetchMyFeedbacks(authProvider.user!.id);
       }
     });
+  }
+
+  void _fetchMyFeedbacks() {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final msgProvider = Provider.of<MessageProvider>(context, listen: false);
+    if (authProvider.user != null) {
+      msgProvider.fetchMyFeedbacks(authProvider.user!.id);
+    }
   }
 
   @override
@@ -72,11 +89,47 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
     );
   }
 
+  Widget _buildEmptyState(String title, String description, IconData icon) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 64, color: Colors.grey[300]),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              description,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey[400],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildFriendsList() {
     return Consumer<MessageProvider>(
       builder: (context, provider, child) {
         if (provider.contacts.isEmpty) {
-           return const Center(child: Text('暂无好友消息'));
+           return _buildEmptyState(
+             '暂无好友消息',
+             '这里会显示你和队友的聊天记录。\n在地图上点击队友头像即可发起聊天。',
+             Icons.chat_bubble_outline,
+           );
         }
         
         return ListView.builder(
@@ -162,7 +215,11 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
   }
 
   Widget _buildTemporaryList() {
-    return const Center(child: Text('暂无临时会话'));
+    return _buildEmptyState(
+      '暂无临时会话',
+      '这里会显示附近的徒步者的临时消息。\n当你在地图上向陌生人打招呼时，会话会出现在这里。',
+      Icons.people_outline,
+    );
   }
 
   Widget _buildMyFeedbacksList() {
@@ -173,147 +230,185 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
       return const Center(child: Text('请先登录'));
     }
 
-    return FutureBuilder<List<Map<String, dynamic>>>(
-      future: DatabaseHelper().getFeedbacks(userId),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
+    return Consumer<MessageProvider>(
+      builder: (context, provider, child) {
+        final feedbacks = provider.myFeedbacks;
         
-        if (snapshot.hasError) {
-          return Center(child: Text('加载失败: ${snapshot.error}'));
-        }
-        
-        final feedbacks = snapshot.data ?? [];
         if (feedbacks.isEmpty) {
-          return const Center(child: Text('暂无路况反馈'));
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.rate_review_outlined, size: 64, color: Colors.grey[300]),
+                const SizedBox(height: 16),
+                const Text(
+                  '暂无路况反馈',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '你发布的路况信息会显示在这里。\n在地图页面点击“路况”按钮即可发布。',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey[400],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: () => provider.fetchMyFeedbacks(userId),
+                  child: const Text('刷新'),
+                ),
+              ],
+            ),
+          );
         }
         
-        return ListView.builder(
-          itemCount: feedbacks.length,
-          padding: const EdgeInsets.all(16),
-          itemBuilder: (context, index) {
-            final feedback = feedbacks[index];
-            final typeMap = {
-              'blocked': {'label': '道路阻断', 'color': Colors.red, 'icon': Icons.block},
-              'detour': {'label': '建议绕行', 'color': Colors.orange, 'icon': Icons.alt_route},
-              'weather': {'label': '天气变化', 'color': Colors.blue, 'icon': Icons.cloud},
-              'water': {'label': '水源位置', 'color': Colors.cyan, 'icon': Icons.water_drop},
-              'campsite': {'label': '推荐营地', 'color': Colors.green, 'icon': Icons.nights_stay},
-              'danger': {'label': '危险区域', 'color': Colors.deepOrange, 'icon': Icons.warning},
-              'other': {'label': '其他信息', 'color': Colors.grey, 'icon': Icons.more_horiz},
-            };
-            
-            final typeKey = feedback['type'] as String? ?? 'other';
-            final typeInfo = typeMap[typeKey] ?? typeMap['other']!;
-            final createdTime = DateTime.fromMillisecondsSinceEpoch(feedback['created_at']);
-            final dateStr = '${createdTime.year}-${createdTime.month}-${createdTime.day} ${createdTime.hour}:${createdTime.minute}';
-            
-            List<String> photos = [];
-            if (feedback['photos'] != null && feedback['photos'].toString().isNotEmpty) {
-              try {
-                photos = List<String>.from(jsonDecode(feedback['photos']));
-              } catch (e) {
-                // ignore error
+        return RefreshIndicator(
+          onRefresh: () => provider.fetchMyFeedbacks(userId),
+          child: ListView.builder(
+            itemCount: feedbacks.length,
+            padding: const EdgeInsets.all(16),
+            itemBuilder: (context, index) {
+              final feedback = feedbacks[index];
+              final typeMap = {
+                'blocked': {'label': '道路阻断', 'color': Colors.red, 'icon': Icons.block},
+                'detour': {'label': '建议绕行', 'color': Colors.orange, 'icon': Icons.alt_route},
+                'weather': {'label': '天气变化', 'color': Colors.blue, 'icon': Icons.cloud},
+                'water': {'label': '水源位置', 'color': Colors.cyan, 'icon': Icons.water_drop},
+                'campsite': {'label': '推荐营地', 'color': Colors.green, 'icon': Icons.nights_stay},
+                'danger': {'label': '危险区域', 'color': Colors.deepOrange, 'icon': Icons.warning},
+                'supply': {'label': '有补给点', 'color': Colors.purple, 'icon': Icons.store},
+                'other': {'label': '其他信息', 'color': Colors.grey, 'icon': Icons.more_horiz},
+              };
+              
+              final typeKey = feedback['type'] as String? ?? 'other';
+              final typeInfo = typeMap[typeKey] ?? typeMap['other']!;
+              final createdTime = DateTime.fromMillisecondsSinceEpoch(feedback['created_at']);
+              final dateStr = '${createdTime.year}-${createdTime.month}-${createdTime.day} ${createdTime.hour}:${createdTime.minute}';
+              
+              List<String> photos = [];
+              if (feedback['photos'] != null && feedback['photos'].toString().isNotEmpty) {
+                try {
+                  photos = List<String>.from(jsonDecode(feedback['photos']));
+                } catch (e) {
+                  // ignore error
+                }
               }
-            }
 
-            return Card(
-              elevation: 2,
-              margin: const EdgeInsets.only(bottom: 16),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          typeInfo['icon'] as IconData,
-                          color: typeInfo['color'] as Color,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          typeInfo['label'] as String,
-                          style: TextStyle(
-                            color: typeInfo['color'] as Color,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const Spacer(),
-                        if (feedback['sync_status'] == 1)
-                          const Row(
-                            children: [
-                              SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2)),
-                              SizedBox(width: 4),
-                              Text('同步中', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                            ],
-                          )
-                        else
-                           const Icon(Icons.cloud_done, size: 16, color: Colors.green),
-                      ],
+              return GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => RouteFeedbackDetailPage(feedback: feedback),
                     ),
-                    const SizedBox(height: 12),
-                    Text(
-                      feedback['content'] ?? '',
-                      style: const TextStyle(fontSize: 16),
-                    ),
-                    if (photos.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        height: 80,
-                        child: ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: photos.length,
-                          separatorBuilder: (_, __) => const SizedBox(width: 8),
-                          itemBuilder: (context, pIndex) {
-                            String url = photos[pIndex];
-                            if (!url.startsWith('http')) {
-                              url = 'http://114.55.148.245:8000$url';
-                            }
-                            return ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: CachedNetworkImage(
-                                imageUrl: url,
-                                width: 80,
-                                height: 80,
-                                fit: BoxFit.cover,
-                                placeholder: (context, url) => Container(color: Colors.grey[200]),
-                                errorWidget: (context, url, error) => const Icon(Icons.error),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  );
+                },
+                child: Card(
+                  elevation: 2,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          dateStr,
-                          style: const TextStyle(color: Colors.grey, fontSize: 12),
-                        ),
                         Row(
                           children: [
-                            const Icon(Icons.remove_red_eye, size: 14, color: Colors.grey),
-                            const SizedBox(width: 4),
-                            Text('${feedback['view_count']}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                            const SizedBox(width: 12),
-                            const Icon(Icons.thumb_up, size: 14, color: Colors.grey),
-                            const SizedBox(width: 4),
-                            Text('${feedback['confirm_count']}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                            Icon(
+                              typeInfo['icon'] as IconData,
+                              color: typeInfo['color'] as Color,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              typeInfo['label'] as String,
+                              style: TextStyle(
+                                color: typeInfo['color'] as Color,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const Spacer(),
+                            if (feedback['sync_status'] == 1)
+                              const Row(
+                                children: [
+                                  SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2)),
+                                  SizedBox(width: 4),
+                                  Text('同步中', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                ],
+                              )
+                            else
+                               const Icon(Icons.cloud_done, size: 16, color: Colors.green),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          feedback['content'] ?? '',
+                          style: const TextStyle(fontSize: 16),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (photos.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            height: 80,
+                            child: ListView.separated(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: photos.length,
+                              separatorBuilder: (_, __) => const SizedBox(width: 8),
+                              itemBuilder: (context, pIndex) {
+                                String url = photos[pIndex];
+                                if (!url.startsWith('http')) {
+                                  url = 'http://114.55.148.245:8000$url';
+                                }
+                                return ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: CachedNetworkImage(
+                                    imageUrl: url,
+                                    width: 80,
+                                    height: 80,
+                                    fit: BoxFit.cover,
+                                    placeholder: (context, url) => Container(color: Colors.grey[200]),
+                                    errorWidget: (context, url, error) => const Icon(Icons.error),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              dateStr,
+                              style: const TextStyle(color: Colors.grey, fontSize: 12),
+                            ),
+                            Row(
+                              children: [
+                                const Icon(Icons.remove_red_eye, size: 14, color: Colors.grey),
+                                const SizedBox(width: 4),
+                                Text('${feedback['view_count']}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                                const SizedBox(width: 12),
+                                const Icon(Icons.thumb_up, size: 14, color: Colors.grey),
+                                const SizedBox(width: 4),
+                                Text('${feedback['confirm_count']}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                              ],
+                            ),
                           ],
                         ),
                       ],
                     ),
-                  ],
+                  ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         );
       },
     );

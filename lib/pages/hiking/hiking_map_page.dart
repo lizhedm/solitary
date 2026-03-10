@@ -19,6 +19,7 @@ import 'package:dio/dio.dart';
 import 'dart:ui' as ui;
 import 'sos_button.dart';
 import 'route_feedback_page.dart';
+import 'route_feedback_detail_page.dart';
 import 'ask_question_page.dart';
 import 'hiking_history_page.dart';
 import '../../services/database_helper.dart';
@@ -43,6 +44,9 @@ class _HikingMapPageState extends State<HikingMapPage>
   bool _isInitializing = true;
   // 错误信息（初始化失败时显示）
   String? _errorMessage;
+  
+  // 是否是模拟器
+  bool _isSimulator = false;
 
   // 当前用户位置（使用LatLng格式）
   LatLng? _position;
@@ -94,8 +98,17 @@ class _HikingMapPageState extends State<HikingMapPage>
   List<dynamic> _nearbyHikers = [];
   Timer? _nearbyUpdateTimer;
   
-  // 是否是模拟器
-  bool _isSimulator = false;
+  // 图层配置
+  bool _showFeedbacks = true;
+  bool _showSOS = true;
+  
+  // 筛选条件
+  int _feedbackDays = 3; // 默认最近3天
+  int _minConfirms = 0; // 默认不过滤点赞数
+
+  // 缓存标记
+  final Map<int, Marker> _feedbackMarkersCache = {};
+  final Map<int, Marker> _sosMarkersCache = {};
 
   @override
   void initState() {
@@ -229,7 +242,12 @@ class _HikingMapPageState extends State<HikingMapPage>
     if (mounted) {
       setState(() {
         // 合并 非周围用户标记 和 最新的周围用户标记
-        _markers = {...nonNearbyMarkers, ..._nearbyMarkersCache.values};
+        _markers = {
+           ...nonNearbyMarkers, 
+           ..._nearbyMarkersCache.values,
+           ..._feedbackMarkersCache.values,
+           ..._sosMarkersCache.values,
+        };
       });
     }
   }
@@ -372,7 +390,7 @@ class _HikingMapPageState extends State<HikingMapPage>
     return latLng.latitude.abs() > 0.001 && latLng.longitude.abs() > 0.001;
   }
 
-  /// 高德地图定位回调
+  /// _onLocationChanged - 高德地图定位回调
   void _onLocationChanged(AMapLocation location) {
     debugPrint(
       '高德定位: ${location.latLng.latitude}, ${location.latLng.longitude}',
@@ -402,15 +420,7 @@ class _HikingMapPageState extends State<HikingMapPage>
             _startAltitude = alt;
           }
           if (_startAltitude != null) {
-            // Calculate gain (simple difference from start, or cumulative gain?)
-            // PRD says: "记录点击开始徒步时的海拔高度和当前的海拔高度的差值" -> Difference from start
             _elevationGain = (alt - _startAltitude!).round();
-            // Ensure non-negative if current < start? Usually gain implies cumulative positive change, 
-            // but "差值" implies difference. Let's stick to difference for now, maybe abs()?
-            // Usually elevation gain in hiking means total ascent. 
-            // But the requirement says "difference between start and current". 
-            // I will use simple difference. If negative (going down), show 0 or negative? 
-            // Let's assume user wants to know how much higher they are.
           }
         }
       }
@@ -427,6 +437,16 @@ class _HikingMapPageState extends State<HikingMapPage>
         _centerOnNextLocation = false;
       });
     }
+    
+    // 首次定位成功后，加载一次周边路况
+    if (_isInitializing) {
+       _loadFeedbacksAndSOS(center: location.latLng);
+    }
+  }
+  
+  // 添加地图视野变化监听
+  void _onCameraMoveEnd(CameraPosition position) {
+     _loadFeedbacksAndSOS(center: position.target);
   }
 
   /// _locateToCurrentPosition - 定位到当前位置
@@ -986,6 +1006,7 @@ class _HikingMapPageState extends State<HikingMapPage>
                   polylines: _polylines,
                   myLocationStyleOptions: _myLocationStyleOptions,
                   onLocationChanged: _onLocationChanged,
+                  onCameraMoveEnd: _onCameraMoveEnd, // Add this
                   onMapCreated: (AMapController controller) {
                     debugPrint('AMap created');
                     setState(() {
@@ -1150,26 +1171,357 @@ class _HikingMapPageState extends State<HikingMapPage>
     );
   }
 
+  // 添加图层配置对话框
+  void _showLayerConfig() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('图层显示', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              
+              // 路况开关
+              SwitchListTile(
+                title: const Text('路况信息'),
+                secondary: const Icon(Icons.comment, color: Colors.blue),
+                value: _showFeedbacks,
+                onChanged: (val) {
+                  setState(() => _showFeedbacks = val);
+                  this.setState(() => _showFeedbacks = val); // Update parent state
+                  _refreshMapMarkers();
+                },
+              ),
+              
+              // 路况筛选（仅当路况开启时显示）
+              if (_showFeedbacks) ...[
+                const Padding(
+                  padding: EdgeInsets.only(left: 16, top: 8),
+                  child: Text('路况筛选', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      const Text('时间范围: '),
+                      DropdownButton<int>(
+                        value: _feedbackDays,
+                        items: const [
+                          DropdownMenuItem(value: 3, child: Text('最近3天')),
+                          DropdownMenuItem(value: 7, child: Text('最近7天')),
+                          DropdownMenuItem(value: 30, child: Text('最近30天')),
+                        ],
+                        onChanged: (val) {
+                          if (val != null) {
+                            setState(() => _feedbackDays = val);
+                            this.setState(() => _feedbackDays = val);
+                            _refreshMapMarkers();
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      const Text('最少确认: '),
+                      DropdownButton<int>(
+                        value: _minConfirms,
+                        items: const [
+                          DropdownMenuItem(value: 0, child: Text('不限')),
+                          DropdownMenuItem(value: 5, child: Text('5+')),
+                          DropdownMenuItem(value: 10, child: Text('10+')),
+                        ],
+                        onChanged: (val) {
+                          if (val != null) {
+                            setState(() => _minConfirms = val);
+                            this.setState(() => _minConfirms = val);
+                            _refreshMapMarkers();
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              
+              const Divider(),
+              
+              // 求助开关
+              SwitchListTile(
+                title: const Text('求助信号'),
+                secondary: const Icon(Icons.warning, color: Colors.red),
+                value: _showSOS,
+                onChanged: (val) {
+                  setState(() => _showSOS = val);
+                  this.setState(() => _showSOS = val);
+                  _refreshMapMarkers();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 刷新地图上的所有标记（路况、求助、周围用户等）
+  void _refreshMapMarkers() {
+    if (_position == null) return;
+    
+    // 重新加载路况和求助数据
+    _loadFeedbacksAndSOS();
+    
+    // 触发UI更新（_updateMapMarkers 会合并所有缓存的标记）
+    _updateMapMarkers();
+  }
+
+  // 加载路况和求助数据
+  Future<void> _loadFeedbacksAndSOS({LatLng? center}) async {
+    final targetPos = center ?? _position;
+    if (targetPos == null) return;
+    
+    // 计算当前可见范围（这里简单模拟，实际可以使用地图的bounds）
+    // 假设范围是当前位置周边 10km (~0.1度)
+    final double range = 0.1;
+    final minLat = targetPos.latitude - range;
+    final maxLat = targetPos.latitude + range;
+    final minLng = targetPos.longitude - range;
+    final maxLng = targetPos.longitude + range;
+
+    // 1. 加载路况
+    if (_showFeedbacks) {
+      try {
+        final response = await ApiService().get('/messages/feedbacks', queryParameters: {
+          'min_lat': minLat,
+          'max_lat': maxLat,
+          'min_lng': minLng,
+          'max_lng': maxLng,
+          'days': _feedbackDays,
+          'min_confirms': _minConfirms,
+        });
+        
+        if (response.statusCode == 200) {
+          final List<dynamic> data = response.data;
+          _updateFeedbackMarkers(data);
+        }
+      } catch (e) {
+        debugPrint('Load feedbacks failed: $e');
+      }
+    } else {
+      _feedbackMarkersCache.clear();
+    }
+
+    // 2. 加载求助
+    if (_showSOS) {
+      try {
+        final response = await ApiService().get('/messages/sos', queryParameters: {
+          'min_lat': minLat,
+          'max_lat': maxLat,
+          'min_lng': minLng,
+          'max_lng': maxLng,
+        });
+        
+        if (response.statusCode == 200) {
+          final List<dynamic> data = response.data;
+          _updateSOSMarkers(data);
+        }
+      } catch (e) {
+        debugPrint('Load SOS failed: $e');
+      }
+    } else {
+      _sosMarkersCache.clear();
+    }
+    
+    _updateMapMarkers();
+  }
+
+  // 更新路况标记缓存
+  Future<void> _updateFeedbackMarkers(List<dynamic> feedbacks) async {
+    _feedbackMarkersCache.clear();
+    for (var item in feedbacks) {
+      final id = item['id'];
+      final lat = item['latitude'];
+      final lng = item['longitude'];
+      final type = item['type'];
+      
+      // 根据类型选择图标颜色
+      Color color = Colors.grey;
+      IconData iconData = Icons.info;
+      if (type == 'blocked') { color = Colors.red; iconData = Icons.block; }
+      else if (type == 'weather') { color = Colors.blue; iconData = Icons.cloud; }
+      else if (type == 'supply') { color = Colors.purple; iconData = Icons.store; }
+      else if (type == 'danger') { color = Colors.deepOrange; iconData = Icons.warning; }
+      
+      final iconBytes = await _createIconMarkerBytes(iconData, color);
+      
+      _feedbackMarkersCache[id] = Marker(
+        position: LatLng(lat, lng),
+        icon: BitmapDescriptor.fromBytes(iconBytes),
+        onTap: (markerId) => _showMarkerInfoCard(item, isSOS: false),
+        zIndex: 80,
+      );
+    }
+  }
+
+  // 更新求助标记缓存
+  Future<void> _updateSOSMarkers(List<dynamic> alerts) async {
+    _sosMarkersCache.clear();
+    for (var item in alerts) {
+      final id = item['id'];
+      final lat = item['latitude'];
+      final lng = item['longitude'];
+      
+      final iconBytes = await _createIconMarkerBytes(Icons.sos, Colors.red, isPulse: true);
+      
+      _sosMarkersCache[id] = Marker(
+        position: LatLng(lat, lng),
+        icon: BitmapDescriptor.fromBytes(iconBytes),
+        onTap: (markerId) => _showMarkerInfoCard(item, isSOS: true),
+        zIndex: 100, // SOS 最顶层
+      );
+    }
+  }
+
+  // 生成图标标记
+  Future<Uint8List> _createIconMarkerBytes(IconData icon, Color color, {bool isPulse = false}) async {
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    const size = 80;
+    final double dSize = size.toDouble();
+    final center = Offset(dSize / 2, dSize / 2);
+
+    // 绘制背景
+    if (isPulse) {
+       final pulsePaint = Paint()..color = color.withOpacity(0.3);
+       canvas.drawCircle(center, dSize / 2 + 8, pulsePaint);
+    }
+    final bgPaint = Paint()..color = color;
+    canvas.drawCircle(center, dSize / 2, bgPaint);
+    
+    // 绘制边框
+    final borderPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4;
+    canvas.drawCircle(center, dSize / 2 - 2, borderPaint);
+
+    // 绘制图标 (简化版，实际可能需要加载图片资源)
+    // 这里用文字代替图标，或者需要引入 icon font 转 image 的逻辑
+    // 为简单起见，画一个圆点或首字母
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(icon.codePoint),
+        style: TextStyle(
+          fontSize: 40,
+          fontFamily: icon.fontFamily,
+          color: Colors.white,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    textPainter.layout();
+    textPainter.paint(canvas, Offset((dSize - textPainter.width) / 2, (dSize - textPainter.height) / 2));
+
+    final picture = recorder.endRecording();
+    final img = await picture.toImage(size, size);
+    final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
+    return byteData!.buffer.asUint8List();
+  }
+
+  // 显示标记信息卡片
+  void _showMarkerInfoCard(Map<String, dynamic> data, {required bool isSOS}) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => Container(
+        margin: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: const [BoxShadow(blurRadius: 10, color: Colors.black26)],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: CircleAvatar(
+                backgroundColor: isSOS ? Colors.red.withOpacity(0.1) : Colors.blue.withOpacity(0.1),
+                child: Icon(
+                  isSOS ? Icons.warning : Icons.info,
+                  color: isSOS ? Colors.red : Colors.blue,
+                ),
+              ),
+              title: Text(isSOS ? '紧急求助' : (data['type'] ?? '路况信息')),
+              subtitle: Text(
+                data['content'] ?? data['message'] ?? '无内容',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isSOS ? Colors.red : Colors.blue,
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: () {
+                    Navigator.pop(context); // Close card
+                    // Both SOS and Feedback use the same detail page for now
+                    Navigator.push(
+                      context, 
+                      MaterialPageRoute(builder: (_) => RouteFeedbackDetailPage(feedback: data))
+                    );
+                  },
+                  child: const Text('查看详情'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// _buildRightToolbar - 构建右侧工具栏
   Widget _buildRightToolbar() {
     return Column(
       children: [
-        _buildToolButton(Icons.layers, () {}),
+        _buildToolButton(Icons.layers, '图层', () => _showLayerConfig()),
         const SizedBox(height: 12),
-        _buildToolButton(Icons.my_location, () {
+        _buildToolButton(Icons.my_location, '定位', () {
           _locateToCurrentPosition();
         }),
         const SizedBox(height: 12),
-        _buildToolButton(Icons.group, () {}, badgeCount: 3),
+        _buildToolButton(Icons.group, '队友', () {}, badgeCount: 3),
         const SizedBox(height: 12),
-        _buildToolButton(Icons.add_comment, () {
+        _buildToolButton(Icons.add_comment, '路况', () {
           Navigator.push(
             context,
             MaterialPageRoute(builder: (context) => const RouteFeedbackPage()),
           );
         }),
         const SizedBox(height: 12),
-        _buildToolButton(Icons.help_outline, () {
+        _buildToolButton(Icons.help_outline, '求助', () {
           Navigator.push(
             context,
             MaterialPageRoute(builder: (context) => const AskQuestionPage()),
@@ -1182,48 +1534,71 @@ class _HikingMapPageState extends State<HikingMapPage>
   /// _buildToolButton - 构建工具栏按钮
   Widget _buildToolButton(
     IconData icon,
+    String label,
     VoidCallback onTap, {
     int badgeCount = 0,
   }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          shape: BoxShape.circle,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.15),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            Icon(icon, color: Colors.grey[700]),
-            if (badgeCount > 0)
-              Positioned(
-                top: 0,
-                right: 0,
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: const BoxDecoration(
-                    color: Colors.red,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Text(
-                    '$badgeCount',
-                    style: const TextStyle(color: Colors.white, fontSize: 10),
-                  ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          onTap: onTap,
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.15),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
                 ),
-              ),
-          ],
+              ],
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Icon(icon, color: Colors.grey[700]),
+                if (badgeCount > 0)
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        '$badgeCount',
+                        style: const TextStyle(color: Colors.white, fontSize: 10),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
-      ),
+        const SizedBox(height: 4),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.5),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 10,
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              height: 1.0,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
