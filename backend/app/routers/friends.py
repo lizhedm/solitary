@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from app.database.database import get_db
 from app.models.friendship import Friendship
+from app.models.snap import Snap
 from app.models.user import User
 from app.routers.auth import get_current_user
 from pydantic import BaseModel
@@ -78,3 +79,92 @@ def add_friend(
     db.add(friendship)
     db.commit()
     return {"status": "PENDING"}
+
+@router.post("/friends/snap/{user_id}")
+def snap_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot snap yourself")
+        
+    # 1. Check if already friends
+    is_friend = db.query(Friendship).filter(
+        ((Friendship.user_id == current_user.id) & (Friendship.friend_id == user_id)) |
+        ((Friendship.user_id == user_id) & (Friendship.friend_id == current_user.id)),
+        Friendship.status == "ACCEPTED"
+    ).first()
+    
+    if is_friend:
+        return {"status": "FRIENDS"}
+        
+    # 2. Check if I already snapped this user
+    my_snap = db.query(Snap).filter(
+        Snap.user_id == current_user.id,
+        Snap.target_id == user_id
+    ).first()
+    
+    if my_snap:
+        # Check if they also snapped me (mutual)
+        their_snap = db.query(Snap).filter(
+            Snap.user_id == user_id,
+            Snap.target_id == current_user.id
+        ).first()
+        if their_snap:
+            return {"status": "MATCHED"}
+        return {"status": "SNAPPED"}
+        
+    # 3. Check if they snapped me (mutual match!)
+    their_snap = db.query(Snap).filter(
+        Snap.user_id == user_id,
+        Snap.target_id == current_user.id
+    ).first()
+    
+    if their_snap:
+        # Create mutual friendship
+        friendship = Friendship(
+            user_id=current_user.id,
+            friend_id=user_id,
+            status="ACCEPTED",
+            created_at=int(time.time() * 1000)
+        )
+        # Also record my snap
+        new_snap = Snap(user_id=current_user.id, target_id=user_id)
+        db.add(friendship)
+        db.add(new_snap)
+        db.commit()
+        return {"status": "MATCHED"}
+    else:
+        # Record my snap
+        new_snap = Snap(user_id=current_user.id, target_id=user_id)
+        db.add(new_snap)
+        db.commit()
+        return {"status": "SNAPPED"}
+
+@router.get("/friends/snap/status/{user_id}")
+def get_snap_status(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Check friendship first
+    is_friend = db.query(Friendship).filter(
+        ((Friendship.user_id == current_user.id) & (Friendship.friend_id == user_id)) |
+        ((Friendship.user_id == user_id) & (Friendship.friend_id == current_user.id)),
+        Friendship.status == "ACCEPTED"
+    ).first()
+    
+    if is_friend:
+        return {"status": "FRIENDS"}
+        
+    # Check snap
+    my_snap = db.query(Snap).filter(
+        Snap.user_id == current_user.id,
+        Snap.target_id == user_id
+    ).first()
+    
+    if my_snap:
+        return {"status": "SNAPPED"}
+    
+    return {"status": "NONE"}

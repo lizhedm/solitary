@@ -210,10 +210,21 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
   String _formatTime(int timestamp) {
     final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
     final now = DateTime.now();
-    if (date.year == now.year && date.month == now.month && date.day == now.day) {
-      return '${date.hour.toString().padLeft(2,'0')}:${date.minute.toString().padLeft(2,'0')}';
+    final today = DateTime(now.year, now.month, now.day);
+    final thatDay = DateTime(date.year, date.month, date.day);
+    
+    final diff = today.difference(thatDay).inDays;
+    final timeStr = '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    
+    if (diff == 0) {
+      return '今天 $timeStr';
+    } else if (diff == 1) {
+      return '昨天 $timeStr';
+    } else if (diff == 2) {
+      return '前天 $timeStr';
+    } else {
+      return '${date.month}月${date.day}日 $timeStr';
     }
-    return '${date.month}/${date.day}';
   }
 
   Widget _buildTemporaryList() {

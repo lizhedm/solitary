@@ -229,6 +229,21 @@ class _ChatPageState extends State<ChatPage> {
 
   String _formatTime(int timestamp) {
     final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
-    return '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final thatDay = DateTime(date.year, date.month, date.day);
+    
+    final diff = today.difference(thatDay).inDays;
+    final timeStr = '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    
+    if (diff == 0) {
+      return '今天 $timeStr';
+    } else if (diff == 1) {
+      return '昨天 $timeStr';
+    } else if (diff == 2) {
+      return '前天 $timeStr';
+    } else {
+      return '${date.month}月${date.day}日 $timeStr';
+    }
   }
 }
