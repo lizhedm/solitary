@@ -438,7 +438,8 @@ def create_sos(
     timestamp = int(time.time() * 1000)
     
     for target_id in targets:
-        msg = Message(
+        # Create message for receiver
+        msg_to_target = Message(
             sender_id=current_user.id,
             receiver_id=target_id,
             content=sos.message, # Contains full JSON or formatted text
@@ -446,7 +447,7 @@ def create_sos(
             timestamp=timestamp,
             is_read=False
         )
-        db.add(msg)
+        db.add(msg_to_target)
         
     db.commit()
     

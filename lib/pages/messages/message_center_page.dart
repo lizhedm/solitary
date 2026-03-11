@@ -261,59 +261,80 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                 };
               }
               groupedQuestions[content]!['recipients'].add(msg['receiver_id']);
-              // Check if there are replies from this receiver?
-              // That would require querying messages where sender=receiver_id and type='text' (reply)
             }
             
-            // 2. Find incoming questions (someone asked me)
+            // 2. Find incoming questions AND SOS messages (someone asked me or sent SOS)
             // Group by sender_id
-            final incomingQuestions = await db.query(
+            final incomingMessages = await db.query(
               'messages',
-              where: 'receiver_id = ? AND type = ? AND hike_id IS NULL',
-              whereArgs: [currentUserId, 'question'],
+              where: '((receiver_id = ?) OR (sender_id = ? AND type = ?)) AND hike_id IS NULL AND (type = ? OR type = ?)',
+              whereArgs: [currentUserId, currentUserId, 'sos', 'question', 'sos'],
               orderBy: 'timestamp DESC'
             );
             
             final Map<int, Map<String, dynamic>> incomingMap = {};
-            for (var msg in incomingQuestions) {
+            for (var msg in incomingMessages) {
               final senderId = msg['sender_id'] as int;
-              if (!incomingMap.containsKey(senderId)) {
-                // Get sender info
+              final receiverId = msg['receiver_id'] as int;
+              
+              // Determine partner ID (the other person)
+              final partnerId = (senderId == currentUserId) ? receiverId : senderId;
+              
+              // We want to show the latest message per partner
+              // If we already have a newer message for this partner, skip
+              if (incomingMap.containsKey(partnerId)) {
+                if ((msg['timestamp'] as int) < (incomingMap[partnerId]!['timestamp'] as int)) {
+                   continue;
+                }
+              }
+              
+              if (!incomingMap.containsKey(partnerId)) {
+                // Get partner info
                 // Try local contact first
-                var contact = await DatabaseHelper().getContact(senderId);
-                String name = contact?['nickname'] ?? '用户 $senderId';
+                var contact = await DatabaseHelper().getContact(partnerId);
+                String name = contact?['nickname'] ?? '用户 $partnerId';
                 String avatar = contact?['avatar'] ?? '';
                 
                 // If not found locally, fetch from API
                 if (contact == null) {
                   try {
-                    final response = await ApiService().get('/users/$senderId');
+                    final response = await ApiService().get('/users/$partnerId');
                     if (response.statusCode == 200 && response.data != null) {
                       final user = response.data;
-                      name = user['nickname'] ?? '用户 $senderId';
+                      name = user['nickname'] ?? '用户 $partnerId';
                       avatar = user['avatar'] ?? '';
-                      // Optionally save to contacts or temp cache?
                     }
                   } catch (e) {
                     // Ignore error, keep default
                   }
                 }
+                
+                String content = msg['content'] as String;
+                String type = msg['type'] as String;
+                
+                // Format content based on type
+                if (type == 'sos') {
+                  content = '[SOS求救] 点击查看详情';
+                } else if (type == 'question') {
+                  content = '收到提问: $content';
+                }
 
-                incomingMap[senderId] = {
-                  'sender_id': senderId,
-                  'sender_name': name,
-                  'sender_avatar': avatar,
-                  'content': msg['content'],
+                incomingMap[partnerId] = {
+                  'partner_id': partnerId,
+                  'partner_name': name,
+                  'partner_avatar': avatar,
+                  'content': content,
                   'timestamp': msg['timestamp'],
+                  'type': type,
                   'is_incoming': true
                 };
               }
             }
             
             final List<Map<String, dynamic>> combined = [];
-            // Filter out finished hikes for my questions too?
-            // "hike_id IS NULL" ensures we only show active ones.
-            // Check my questions too:
+            
+            // Add My Questions groups
+            // Only add if not empty?
             final myQuestionsFiltered = await db.query(
               'messages',
               where: 'sender_id = ? AND type = ? AND hike_id IS NULL',
@@ -393,30 +414,44 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                   );
                 } 
                 
-                // 2. Incoming Question (Single Chat)
+                // 2. Incoming/Outgoing Single Chat (SOS or Question or Others)
                 else {
-                   final senderId = item['sender_id'] as int;
-                   final senderName = item['sender_name'] as String;
-                   final senderAvatar = item['sender_avatar'] as String;
+                   final partnerId = item['partner_id'] as int;
+                   final partnerName = item['partner_name'] as String;
+                   final partnerAvatar = item['partner_avatar'] as String;
+                   final type = item['type'] as String;
+                   final isSOS = type == 'sos';
 
                    return Card(
                     margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    color: isSOS ? Colors.red.shade50 : null, // Red background for SOS
+                    shape: isSOS ? RoundedRectangleBorder(
+                      side: BorderSide(color: Colors.red.shade200, width: 1),
+                      borderRadius: BorderRadius.circular(12),
+                    ) : null,
                     child: ListTile(
-                      leading: (senderAvatar.isNotEmpty)
+                      leading: (partnerAvatar.isNotEmpty)
                           ? CircleAvatar(
                               backgroundImage: CachedNetworkImageProvider(
-                                senderAvatar.startsWith('http') 
-                                  ? senderAvatar 
-                                  : 'http://114.55.148.245:8000$senderAvatar'
+                                partnerAvatar.startsWith('http') 
+                                  ? partnerAvatar 
+                                  : 'http://114.55.148.245:8000$partnerAvatar'
                               ),
                             )
                           : CircleAvatar(
-                              backgroundColor: Colors.orange.shade100,
-                              child: Text(senderName.substring(0, 1), style: const TextStyle(color: Colors.orange)),
+                              backgroundColor: isSOS ? Colors.red.shade100 : Colors.orange.shade100,
+                              child: isSOS 
+                                ? const Icon(Icons.warning_amber_rounded, color: Colors.red)
+                                : Text(partnerName.substring(0, 1), style: const TextStyle(color: Colors.orange)),
                             ),
-                      title: Text('收到提问: ${item['content']}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                      title: Text(
+                        item['content'], 
+                        maxLines: 1, 
+                        overflow: TextOverflow.ellipsis,
+                        style: isSOS ? const TextStyle(color: Colors.red, fontWeight: FontWeight.bold) : null,
+                      ),
                       subtitle: Text(
-                        '来自 $senderName • ${_formatTime(item['timestamp'])}',
+                        '与 $partnerName • ${_formatTime(item['timestamp'])}',
                         style: const TextStyle(fontSize: 12),
                       ),
                       trailing: const Icon(Icons.chat),
@@ -425,9 +460,9 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                           context,
                           MaterialPageRoute(
                             builder: (context) => ChatPage(
-                              title: senderName,
-                              avatar: senderAvatar,
-                              partnerId: senderId,
+                              title: partnerName,
+                              avatar: partnerAvatar,
+                              partnerId: partnerId,
                             ),
                           ),
                         );
