@@ -26,8 +26,10 @@ class MessageOut(BaseModel):
     content: str
     type: str
     timestamp: int
-    is_read: bool
-    hike_id: Optional[int]
+    is_read: bool = False
+    hike_id: Optional[int] = None
+    sender_hike_id: Optional[int] = None
+    receiver_hike_id: Optional[int] = None
     
     class Config:
         from_attributes = True
