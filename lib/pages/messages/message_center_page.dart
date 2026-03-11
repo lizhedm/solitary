@@ -269,96 +269,85 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
           },
           child: FutureBuilder<List<Map<String, dynamic>>>(
             future: DatabaseHelper().database.then((db) async {
-              debugPrint('Fetching temporary messages for user $currentUserId');
+              debugPrint('Fetching all messages for temporary list checking...');
               
-              // 1. Find my questions (grouped by content/time approx)
-              final myQuestions = await db.query(
+              // Fetch ALL messages related to current user to avoid any SQL filtering issues
+              final allMessages = await db.query(
                 'messages',
-                where: 'sender_id = ? AND type = ? AND (hike_id IS NULL OR hike_id = 0)',
-                whereArgs: [currentUserId, 'question'],
+                where: 'sender_id = ? OR receiver_id = ?',
+                whereArgs: [currentUserId, currentUserId],
                 orderBy: 'timestamp DESC'
               );
-              debugPrint('Found ${myQuestions.length} my questions');
-            
-              // Group by content
-              final Map<String, Map<String, dynamic>> groupedQuestions = {};
-              for (var msg in myQuestions) {
-                final content = msg['content'] as String;
-                if (!groupedQuestions.containsKey(content)) {
-                  groupedQuestions[content] = {
-                    'content': content,
-                    'timestamp': msg['timestamp'],
-                    'recipients': <int>[],
-                    'reply_count': 0
-                  };
+              
+              debugPrint('Total raw messages found: ${allMessages.length}');
+              
+              // Containers for final result
+              final Map<String, Map<String, dynamic>> myQuestionsMap = {}; // Grouped by content
+              final Map<int, Map<String, dynamic>> incomingMap = {}; // Grouped by partnerId
+              
+              for (var msg in allMessages) {
+                final type = msg['type'] as String? ?? 'text';
+                final senderId = msg['sender_id'] as int;
+                final receiverId = msg['receiver_id'] as int;
+                final hikeId = msg['hike_id'] as int?;
+                
+                // 1. My Questions (Sent by me, type=question, not in hike)
+                if (senderId == currentUserId && type == 'question' && (hikeId == null || hikeId == 0)) {
+                  final content = msg['content'] as String;
+                  if (!myQuestionsMap.containsKey(content)) {
+                    myQuestionsMap[content] = {
+                      'content': content,
+                      'timestamp': msg['timestamp'],
+                      'recipients': <int>[],
+                      'reply_count': 0,
+                      'is_incoming': false // Explicitly mark as my question group
+                    };
+                  }
+                  // Add recipient if not already added
+                  final recipients = myQuestionsMap[content]!['recipients'] as List<int>;
+                  if (!recipients.contains(receiverId)) {
+                    recipients.add(receiverId);
+                  }
+                  continue;
                 }
-                groupedQuestions[content]!['recipients'].add(msg['receiver_id']);
-              }
-            
-              // 2. Find incoming questions (someone asked me)
-              final incomingQuestions = await db.query(
-                'messages',
-                where: 'receiver_id = ? AND type = ? AND (hike_id IS NULL OR hike_id = 0)',
-                whereArgs: [currentUserId, 'question'],
-                orderBy: 'timestamp DESC'
-              );
-              debugPrint('Found ${incomingQuestions.length} incoming questions');
-              
-              // 3. Find ALL SOS messages (sent or received)
-              // SOS messages are critical, show them regardless of hike_id (though usually null)
-              final sosMessages = await db.query(
-                'messages',
-                where: '(sender_id = ? OR receiver_id = ?) AND type = ?',
-                whereArgs: [currentUserId, currentUserId, 'sos'],
-                orderBy: 'timestamp DESC'
-              );
-              debugPrint('Found ${sosMessages.length} SOS messages');
-            
-              final Map<int, Map<String, dynamic>> incomingMap = {};
-              
-              // Process Incoming Questions
-              for (var msg in incomingQuestions) {
-                 final senderId = msg['sender_id'] as int;
-                 final partnerId = senderId; // For incoming, partner is sender
-                 
-                 if (incomingMap.containsKey(partnerId)) {
-                   if ((msg['timestamp'] as int) < (incomingMap[partnerId]!['timestamp'] as int)) {
-                      continue;
+                
+                // 2. Incoming Questions (Received by me, type=question, not in hike)
+                if (receiverId == currentUserId && type == 'question' && (hikeId == null || hikeId == 0)) {
+                   final partnerId = senderId;
+                   // Logic: Keep latest message per partner
+                   if (incomingMap.containsKey(partnerId)) {
+                      final existingTime = (incomingMap[partnerId]!['msg'] as Map)['timestamp'] as int;
+                      if ((msg['timestamp'] as int) < existingTime) continue;
                    }
-                 }
-                 
-                 // ... will fill details below ...
-                 incomingMap[partnerId] = {
-                   'msg': msg,
-                   'type': 'question',
-                   'partner_id': partnerId
-                 };
+                   incomingMap[partnerId] = {
+                     'msg': msg,
+                     'type': 'question',
+                     'partner_id': partnerId
+                   };
+                   continue;
+                }
+                
+                // 3. SOS Messages (Sent OR Received, type=sos, IGNORE hike_id)
+                if (type == 'sos') {
+                   final partnerId = (senderId == currentUserId) ? receiverId : senderId;
+                   
+                   // Logic: Keep latest message per partner (SOS overrides others if newer)
+                   if (incomingMap.containsKey(partnerId)) {
+                      final existingTime = (incomingMap[partnerId]!['msg'] as Map)['timestamp'] as int;
+                      if ((msg['timestamp'] as int) < existingTime) continue;
+                   }
+                   incomingMap[partnerId] = {
+                     'msg': msg,
+                     'type': 'sos',
+                     'partner_id': partnerId
+                   };
+                   continue;
+                }
               }
               
-              // Process SOS Messages
-              for (var msg in sosMessages) {
-                 final senderId = msg['sender_id'] as int;
-                 final receiverId = msg['receiver_id'] as int;
-                 final partnerId = (senderId == currentUserId) ? receiverId : senderId;
-                 
-                 // If we already have a message (e.g. question), check timestamp
-                 // Usually SOS is more important? Or just sort by time.
-                 // Let's just sort by time.
-                 if (incomingMap.containsKey(partnerId)) {
-                    final existingTimestamp = (incomingMap[partnerId]!['msg'] as Map)['timestamp'] as int;
-                    if ((msg['timestamp'] as int) < existingTimestamp) {
-                       continue;
-                    }
-                 }
-                 
-                 incomingMap[partnerId] = {
-                   'msg': msg,
-                   'type': 'sos',
-                   'partner_id': partnerId
-                 };
-              }
+              debugPrint('Processed: ${myQuestionsMap.length} my questions, ${incomingMap.length} other chats');
               
-              // Resolve Contact Info for all items in incomingMap
+              // Resolve Contact Info for incomingMap
               for (var key in incomingMap.keys) {
                  final item = incomingMap[key]!;
                  final msg = item['msg'] as Map<String, dynamic>;
@@ -367,37 +356,40 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                  final senderId = msg['sender_id'] as int;
                  
                  // Get partner info
+                 String name = '用户 $partnerId';
+                 String avatar = '';
+                 
                  var contact = await DatabaseHelper().getContact(partnerId);
-                 String name = contact?['nickname'] ?? '用户 $partnerId';
-                 String avatar = contact?['avatar'] ?? '';
-                
-                 if (contact == null) {
+                 if (contact != null) {
+                    name = contact['nickname'] ?? name;
+                    avatar = contact['avatar'] ?? avatar;
+                 } else {
                     try {
                       final response = await ApiService().get('/users/$partnerId');
                       if (response.statusCode == 200 && response.data != null) {
                         final user = response.data;
-                        name = user['nickname'] ?? '用户 $partnerId';
-                        avatar = user['avatar'] ?? '';
+                        name = user['nickname'] ?? name;
+                        avatar = user['avatar'] ?? avatar;
                       }
                     } catch (e) {
-                      debugPrint('Error fetching user info: $e');
+                      debugPrint('Error fetching user info for $partnerId: $e');
                     }
                  }
                  
                  String content = msg['content'] as String;
                  
-                 // Format content
+                 // Format content for display
                  if (type == 'sos') {
                     if (senderId == currentUserId) {
-                      content = '[SOS求救] 我发出的求救';
+                      content = '[SOS求救] 我向他发出了求救';
                     } else {
-                      content = '[SOS求救] 收到求救信号';
+                      content = '[SOS求救] 收到他的求救信号';
                     }
                  } else if (type == 'question') {
                     content = '收到提问: $content';
                  }
                  
-                 // Update the map item with final display data
+                 // Finalize item
                  incomingMap[key] = {
                     'partner_id': partnerId,
                     'partner_name': name,
@@ -405,12 +397,12 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                     'content': content,
                     'timestamp': msg['timestamp'],
                     'type': type,
-                    'is_incoming': true
+                    'is_incoming': true // This marks it for single-chat card style
                  };
               }
             
               final List<Map<String, dynamic>> combined = [];
-              combined.addAll(groupedQuestions.values);
+              combined.addAll(myQuestionsMap.values);
               combined.addAll(incomingMap.values);
             
               // Sort by timestamp
