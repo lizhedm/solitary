@@ -449,63 +449,7 @@ def create_sos(
         )
         db.add(msg_to_target)
         
-        # Create message copy for sender (so they can see the conversation)
-        msg_for_sender = Message(
-            sender_id=current_user.id,
-            receiver_id=target_id,
-            content=sos.message,
-            type='sos',
-            timestamp=timestamp,
-            is_read=True # Sender read their own message
-        )
-        # Note: In a real chat system, we usually store one message and link it to both. 
-        # But here our simple model might rely on querying by sender/receiver.
-        # Actually, `get_messages` queries `(sender_id == current_user.id) | (receiver_id == current_user.id)`.
-        # So ONE message record is enough if both users query the SAME table.
-        # BUT, if the system is distributed or designed such that users only fetch messages where they are receiver...
-        # Let's check `get_messages`: 
-        # `query = db.query(Message).filter((Message.sender_id == current_user.id) | (Message.receiver_id == current_user.id))`
-        # This means ONE record is visible to BOTH.
-        # So we DON'T need to create a second record.
-        # WAIT! If we create one record, `get_messages` will return it for both.
-        # The previous issue might be that `get_messages` wasn't returning it?
-        # Or maybe the frontend wasn't displaying it correctly?
-        # Let's double check if we need 2 records. 
-        # Usually for "sent" messages, the sender just sees what they sent.
-        # The single record `msg_to_target` has `sender_id=me` and `receiver_id=target`.
-        # When I call `get_messages`, it matches `sender_id == me`. So I should see it.
-        # When target calls `get_messages`, it matches `receiver_id == target`. So they should see it.
-        # SO, creating duplicates is actually WRONG if we share the DB table.
-        # It causes double messages if query is simple OR.
-        
-        # However, the user said "senders cannot see it in temp session".
-        # Maybe `_buildTemporaryList` logic is filtering it out?
-        # It queries `sender_id = ? AND type = ?` for questions.
-        # For incoming it queries `receiver_id = ?`.
-        # For SOS, we need to ensure we query `sender_id = ? AND type = 'sos'`.
-        
-        # Let's revert the duplicate creation if it was wrong, OR keep it if we want independent status (like is_read).
-        # Our model has `is_read` on the message. If I send it, `is_read` applies to receiver.
-        # If I view it, I don't want to mark it read for receiver.
-        # So usually we need per-user message status (e.g. UserMessage association) OR two copies.
-        # Given the simple schema `Message(id, sender, receiver, content, is_read)`, `is_read` is shared.
-        # This is a flaw in the simple schema.
-        # For MVP, let's stick to single record but ensure frontend queries it.
-        # BUT, if we want independent deletion/status, we need copies.
-        # Let's create copies to be safe and support independent `is_read`.
-        # Wait, if we create copies, we need to distinguish them?
-        # `get_messages` would return BOTH if we don't filter.
-        # `get_messages` returns `(sender==me) | (receiver==me)`.
-        # If we have Msg1(sender=me, receiver=target) and Msg2(sender=me, receiver=target)...
-        # Both match `sender==me`. I see two messages.
-        # So we CANNOT simply duplicate with same sender/receiver.
-        # We would need `owner_id` field.
-        
-        # Let's go back to SINGLE record.
-        # The issue is likely in frontend `_buildTemporaryList` query.
-        # It needs to include `(sender_id = me AND type = 'sos')`.
-        
-        pass # Just one record is enough for shared DB.
+    db.commit()
     
     out = SOSOut.from_orm(db_sos)
     out.user_name = current_user.nickname

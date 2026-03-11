@@ -123,85 +123,108 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
     );
   }
 
+  Future<void> _refreshFriendsList() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final msgProvider = Provider.of<MessageProvider>(context, listen: false);
+    if (authProvider.user != null) {
+      msgProvider.startPolling(authProvider.user!.id);
+      await msgProvider.fetchContacts(authProvider.user!.id);
+      await msgProvider.fetchNewMessages(authProvider.user!.id);
+    }
+  }
+
   Widget _buildFriendsList() {
     return Consumer<MessageProvider>(
       builder: (context, provider, child) {
         if (provider.contacts.isEmpty) {
-           return _buildEmptyState(
-             '暂无好友消息',
-             '这里会显示你和队友的聊天记录。\n在地图上点击队友头像即可发起聊天。',
-             Icons.chat_bubble_outline,
+           return RefreshIndicator(
+             onRefresh: _refreshFriendsList,
+             child: ListView(
+               physics: const AlwaysScrollableScrollPhysics(),
+               children: [
+                 SizedBox(height: MediaQuery.of(context).size.height * 0.3),
+                 _buildEmptyState(
+                   '暂无好友消息',
+                   '这里会显示你和队友的聊天记录。\n在地图上点击队友头像即可发起聊天。',
+                   Icons.chat_bubble_outline,
+                 ),
+               ],
+             ),
            );
         }
         
-        return ListView.builder(
-          itemCount: provider.contacts.length,
-          itemBuilder: (context, index) {
-            final contact = provider.contacts[index];
-            final avatarUrl = contact.avatar;
-            
-            return ListTile(
-              leading: GestureDetector(
-                child: (avatarUrl != null && avatarUrl.isNotEmpty)
-                    ? CachedNetworkImage(
-                        imageUrl: avatarUrl.startsWith('http') 
-                            ? avatarUrl 
-                            : 'http://114.55.148.245:8000$avatarUrl',
-                        imageBuilder: (context, imageProvider) => CircleAvatar(
-                          backgroundImage: imageProvider,
+        return RefreshIndicator(
+          onRefresh: _refreshFriendsList,
+          child: ListView.builder(
+            physics: const AlwaysScrollableScrollPhysics(),
+            itemCount: provider.contacts.length,
+            itemBuilder: (context, index) {
+              final contact = provider.contacts[index];
+              final avatarUrl = contact.avatar;
+              
+              return ListTile(
+                leading: GestureDetector(
+                  child: (avatarUrl != null && avatarUrl.isNotEmpty)
+                      ? CachedNetworkImage(
+                          imageUrl: avatarUrl.startsWith('http') 
+                              ? avatarUrl 
+                              : 'http://114.55.148.245:8000$avatarUrl',
+                          imageBuilder: (context, imageProvider) => CircleAvatar(
+                            backgroundImage: imageProvider,
+                          ),
+                          placeholder: (context, url) => const CircleAvatar(child: Icon(Icons.person)),
+                          errorWidget: (context, url, error) => const CircleAvatar(child: Icon(Icons.error)),
+                        )
+                      : CircleAvatar(
+                          backgroundColor: Colors.grey[200],
+                          child: Text(contact.nickname.substring(0, 1).toUpperCase()),
                         ),
-                        placeholder: (context, url) => const CircleAvatar(child: Icon(Icons.person)),
-                        errorWidget: (context, url, error) => const CircleAvatar(child: Icon(Icons.error)),
-                      )
-                    : CircleAvatar(
-                        backgroundColor: Colors.grey[200],
-                        child: Text(contact.nickname.substring(0, 1).toUpperCase()),
+                ),
+                title: Text(contact.nickname),
+                subtitle: Text(
+                  contact.lastMessage ?? '暂无消息', 
+                  maxLines: 1, 
+                  overflow: TextOverflow.ellipsis
+                ),
+                trailing: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    if (contact.lastMessageTime != null)
+                      Text(
+                        _formatTime(contact.lastMessageTime!), 
+                        style: const TextStyle(fontSize: 12, color: Colors.grey)
                       ),
-              ),
-              title: Text(contact.nickname),
-              subtitle: Text(
-                contact.lastMessage ?? '暂无消息', 
-                maxLines: 1, 
-                overflow: TextOverflow.ellipsis
-              ),
-              trailing: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  if (contact.lastMessageTime != null)
-                    Text(
-                      _formatTime(contact.lastMessageTime!), 
-                      style: const TextStyle(fontSize: 12, color: Colors.grey)
-                    ),
-                  const SizedBox(height: 4),
-                  if (contact.unreadCount > 0)
-                    Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: const BoxDecoration(
-                        color: Colors.red,
-                        shape: BoxShape.circle,
+                    const SizedBox(height: 4),
+                    if (contact.unreadCount > 0)
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          '${contact.unreadCount}',
+                          style: const TextStyle(color: Colors.white, fontSize: 10),
+                        ),
                       ),
-                      child: Text(
-                        '${contact.unreadCount}',
-                        style: const TextStyle(color: Colors.white, fontSize: 10),
+                  ],
+                ),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ChatPage(
+                        title: contact.nickname,
+                        avatar: contact.avatar,
+                        partnerId: contact.id, // Need to update ChatPage to accept ID
                       ),
                     ),
-                ],
-              ),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => ChatPage(
-                      title: contact.nickname,
-                      avatar: contact.avatar,
-                      partnerId: contact.id, // Need to update ChatPage to accept ID
-                    ),
-                  ),
-                );
-              },
-            );
-          },
+                  );
+                },
+              );
+            },
+          ),
         );
       },
     );
@@ -237,143 +260,168 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
         if (currentUserId == null) return const Center(child: Text('请先登录'));
         
         // Use FutureBuilder because we need to query DB for specific message types
-        return FutureBuilder<List<Map<String, dynamic>>>(
-          future: DatabaseHelper().database.then((db) async {
-            // 1. Find my questions (grouped by content/time approx)
-            // This is a bit tricky with simple SQL, let's fetch all 'question' type messages sent by me
-            final myQuestions = await db.query(
-              'messages',
-              where: 'sender_id = ? AND type = ?',
-              whereArgs: [currentUserId, 'question'],
-              orderBy: 'timestamp DESC'
-            );
-            
-            // Group by content (assuming content is unique enough for this MVP)
-            final Map<String, Map<String, dynamic>> groupedQuestions = {};
-            for (var msg in myQuestions) {
-              final content = msg['content'] as String;
-              if (!groupedQuestions.containsKey(content)) {
-                groupedQuestions[content] = {
-                  'content': content,
-                  'timestamp': msg['timestamp'],
-                  'recipients': <int>[],
-                  'reply_count': 0
-                };
-              }
-              groupedQuestions[content]!['recipients'].add(msg['receiver_id']);
-            }
-            
-            // 2. Find incoming questions AND SOS messages (someone asked me or sent SOS)
-            // Group by sender_id
-            final incomingMessages = await db.query(
-              'messages',
-              where: '((receiver_id = ?) OR (sender_id = ? AND type = ?)) AND hike_id IS NULL AND (type = ? OR type = ?)',
-              whereArgs: [currentUserId, currentUserId, 'sos', 'question', 'sos'],
-              orderBy: 'timestamp DESC'
-            );
-            
-            final Map<int, Map<String, dynamic>> incomingMap = {};
-            for (var msg in incomingMessages) {
-              final senderId = msg['sender_id'] as int;
-              final receiverId = msg['receiver_id'] as int;
+        return RefreshIndicator(
+          onRefresh: () async {
+            // Force polling to fetch new messages
+            provider.startPolling(currentUserId);
+            await provider.fetchNewMessages(currentUserId);
+            setState(() {});
+          },
+          child: FutureBuilder<List<Map<String, dynamic>>>(
+            future: DatabaseHelper().database.then((db) async {
+              debugPrint('Fetching temporary messages for user $currentUserId');
               
-              // Determine partner ID (the other person)
-              final partnerId = (senderId == currentUserId) ? receiverId : senderId;
-              
-              // We want to show the latest message per partner
-              // If we already have a newer message for this partner, skip
-              if (incomingMap.containsKey(partnerId)) {
-                if ((msg['timestamp'] as int) < (incomingMap[partnerId]!['timestamp'] as int)) {
-                   continue;
+              // 1. Find my questions (grouped by content/time approx)
+              final myQuestions = await db.query(
+                'messages',
+                where: 'sender_id = ? AND type = ? AND (hike_id IS NULL OR hike_id = 0)',
+                whereArgs: [currentUserId, 'question'],
+                orderBy: 'timestamp DESC'
+              );
+              debugPrint('Found ${myQuestions.length} my questions');
+            
+              // Group by content
+              final Map<String, Map<String, dynamic>> groupedQuestions = {};
+              for (var msg in myQuestions) {
+                final content = msg['content'] as String;
+                if (!groupedQuestions.containsKey(content)) {
+                  groupedQuestions[content] = {
+                    'content': content,
+                    'timestamp': msg['timestamp'],
+                    'recipients': <int>[],
+                    'reply_count': 0
+                  };
                 }
+                groupedQuestions[content]!['recipients'].add(msg['receiver_id']);
+              }
+            
+              // 2. Find incoming questions (someone asked me)
+              final incomingQuestions = await db.query(
+                'messages',
+                where: 'receiver_id = ? AND type = ? AND (hike_id IS NULL OR hike_id = 0)',
+                whereArgs: [currentUserId, 'question'],
+                orderBy: 'timestamp DESC'
+              );
+              debugPrint('Found ${incomingQuestions.length} incoming questions');
+              
+              // 3. Find ALL SOS messages (sent or received)
+              // SOS messages are critical, show them regardless of hike_id (though usually null)
+              final sosMessages = await db.query(
+                'messages',
+                where: '(sender_id = ? OR receiver_id = ?) AND type = ?',
+                whereArgs: [currentUserId, currentUserId, 'sos'],
+                orderBy: 'timestamp DESC'
+              );
+              debugPrint('Found ${sosMessages.length} SOS messages');
+            
+              final Map<int, Map<String, dynamic>> incomingMap = {};
+              
+              // Process Incoming Questions
+              for (var msg in incomingQuestions) {
+                 final senderId = msg['sender_id'] as int;
+                 final partnerId = senderId; // For incoming, partner is sender
+                 
+                 if (incomingMap.containsKey(partnerId)) {
+                   if ((msg['timestamp'] as int) < (incomingMap[partnerId]!['timestamp'] as int)) {
+                      continue;
+                   }
+                 }
+                 
+                 // ... will fill details below ...
+                 incomingMap[partnerId] = {
+                   'msg': msg,
+                   'type': 'question',
+                   'partner_id': partnerId
+                 };
               }
               
-              if (!incomingMap.containsKey(partnerId)) {
-                // Get partner info
-                // Try local contact first
-                var contact = await DatabaseHelper().getContact(partnerId);
-                String name = contact?['nickname'] ?? '用户 $partnerId';
-                String avatar = contact?['avatar'] ?? '';
-                
-                // If not found locally, fetch from API
-                if (contact == null) {
-                  try {
-                    final response = await ApiService().get('/users/$partnerId');
-                    if (response.statusCode == 200 && response.data != null) {
-                      final user = response.data;
-                      name = user['nickname'] ?? '用户 $partnerId';
-                      avatar = user['avatar'] ?? '';
+              // Process SOS Messages
+              for (var msg in sosMessages) {
+                 final senderId = msg['sender_id'] as int;
+                 final receiverId = msg['receiver_id'] as int;
+                 final partnerId = (senderId == currentUserId) ? receiverId : senderId;
+                 
+                 // If we already have a message (e.g. question), check timestamp
+                 // Usually SOS is more important? Or just sort by time.
+                 // Let's just sort by time.
+                 if (incomingMap.containsKey(partnerId)) {
+                    final existingTimestamp = (incomingMap[partnerId]!['msg'] as Map)['timestamp'] as int;
+                    if ((msg['timestamp'] as int) < existingTimestamp) {
+                       continue;
                     }
-                  } catch (e) {
-                    // Ignore error, keep default
-                  }
-                }
+                 }
+                 
+                 incomingMap[partnerId] = {
+                   'msg': msg,
+                   'type': 'sos',
+                   'partner_id': partnerId
+                 };
+              }
+              
+              // Resolve Contact Info for all items in incomingMap
+              for (var key in incomingMap.keys) {
+                 final item = incomingMap[key]!;
+                 final msg = item['msg'] as Map<String, dynamic>;
+                 final partnerId = item['partner_id'] as int;
+                 final type = item['type'] as String;
+                 final senderId = msg['sender_id'] as int;
+                 
+                 // Get partner info
+                 var contact = await DatabaseHelper().getContact(partnerId);
+                 String name = contact?['nickname'] ?? '用户 $partnerId';
+                 String avatar = contact?['avatar'] ?? '';
                 
-                String content = msg['content'] as String;
-                String type = msg['type'] as String;
-                
-                // Format content based on type
-                if (type == 'sos') {
-                  if (senderId == currentUserId) {
-                    content = '[SOS求救] 我发出的求救';
-                  } else {
-                    content = '[SOS求救] 收到求救信号';
-                  }
-                } else if (type == 'question') {
-                  if (senderId == currentUserId) {
-                    content = '我的提问: $content';
-                  } else {
+                 if (contact == null) {
+                    try {
+                      final response = await ApiService().get('/users/$partnerId');
+                      if (response.statusCode == 200 && response.data != null) {
+                        final user = response.data;
+                        name = user['nickname'] ?? '用户 $partnerId';
+                        avatar = user['avatar'] ?? '';
+                      }
+                    } catch (e) {
+                      debugPrint('Error fetching user info: $e');
+                    }
+                 }
+                 
+                 String content = msg['content'] as String;
+                 
+                 // Format content
+                 if (type == 'sos') {
+                    if (senderId == currentUserId) {
+                      content = '[SOS求救] 我发出的求救';
+                    } else {
+                      content = '[SOS求救] 收到求救信号';
+                    }
+                 } else if (type == 'question') {
                     content = '收到提问: $content';
-                  }
-                }
-
-                incomingMap[partnerId] = {
-                  'partner_id': partnerId,
-                  'partner_name': name,
-                  'partner_avatar': avatar,
-                  'content': content,
-                  'timestamp': msg['timestamp'],
-                  'type': type,
-                  'is_incoming': true
-                };
+                 }
+                 
+                 // Update the map item with final display data
+                 incomingMap[key] = {
+                    'partner_id': partnerId,
+                    'partner_name': name,
+                    'partner_avatar': avatar,
+                    'content': content,
+                    'timestamp': msg['timestamp'],
+                    'type': type,
+                    'is_incoming': true
+                 };
               }
-            }
             
-            final List<Map<String, dynamic>> combined = [];
+              final List<Map<String, dynamic>> combined = [];
+              combined.addAll(groupedQuestions.values);
+              combined.addAll(incomingMap.values);
             
-            // Add My Questions groups
-            // Only add if not empty?
-            final myQuestionsFiltered = await db.query(
-              'messages',
-              where: 'sender_id = ? AND type = ? AND hike_id IS NULL',
-              whereArgs: [currentUserId, 'question'],
-              orderBy: 'timestamp DESC'
-            );
+              // Sort by timestamp
+              combined.sort((a, b) => (b['timestamp'] as int).compareTo(a['timestamp'] as int));
             
-            final Map<String, Map<String, dynamic>> myGroupedQuestions = {};
-            for (var msg in myQuestionsFiltered) {
-               // ... same grouping logic ...
-              final content = msg['content'] as String;
-              if (!myGroupedQuestions.containsKey(content)) {
-                myGroupedQuestions[content] = {
-                  'content': content,
-                  'timestamp': msg['timestamp'],
-                  'recipients': <int>[],
-                  'reply_count': 0
-                };
-              }
-              myGroupedQuestions[content]!['recipients'].add(msg['receiver_id']);
-            }
-
-            combined.addAll(myGroupedQuestions.values);
-            combined.addAll(incomingMap.values);
-            
-            // Sort by timestamp
-            combined.sort((a, b) => (b['timestamp'] as int).compareTo(a['timestamp'] as int));
-            
-            return combined;
+              return combined;
           }),
           builder: (context, snapshot) {
+            if (snapshot.hasError) {
+               return Center(child: Text('加载失败: ${snapshot.error}'));
+            }
             if (!snapshot.hasData || snapshot.data!.isEmpty) {
               return _buildEmptyState(
                 '暂无临时会话',
@@ -481,10 +529,11 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
               },
             );
           },
-        );
-      },
-    );
-  }
+        ),
+      );
+    },
+  );
+}
 
   Widget _buildMyFeedbacksList() {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
