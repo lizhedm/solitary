@@ -375,6 +375,7 @@ def create_sos(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    # 1. Create SOS Alert Record
     db_sos = SOSAlert(
         user_id=current_user.id,
         latitude=sos.latitude,
@@ -386,6 +387,68 @@ def create_sos(
     db.add(db_sos)
     db.commit()
     db.refresh(db_sos)
+    
+    # 2. Find nearby users to broadcast SOS (10km -> 50km)
+    targets = {}
+    
+    # Strategy:
+    # - First try 10km (3 users)
+    # - If < 3, try 50km (fill up to 3 users)
+    
+    def find_targets(radius_km, limit, exclude_ids):
+        # We find active users (is_hiking=True) first
+        # In a real app, we might also alert non-hiking users if enabled
+        candidates = []
+        
+        # Get potential users from DB (bounding box approx)
+        # 1 deg lat ~= 111km. 50km ~= 0.45 deg. 10km ~= 0.09 deg.
+        delta = radius_km / 111.0 
+        
+        users = db.query(User).filter(
+            User.id != current_user.id,
+            User.id.notin_(exclude_ids),
+            User.current_lat >= sos.latitude - delta,
+            User.current_lat <= sos.latitude + delta,
+            User.current_lng >= sos.longitude - delta,
+            User.current_lng <= sos.longitude + delta
+        ).all()
+        
+        for u in users:
+            if u.current_lat and u.current_lng:
+                dist = calculate_distance(sos.latitude, sos.longitude, u.current_lat, u.current_lng)
+                if dist <= radius_km:
+                    candidates.append((dist, u))
+        
+        candidates.sort(key=lambda x: x[0])
+        return candidates[:limit]
+
+    # Step 2a: 10km search
+    nearby_10km = find_targets(10.0, 3, [])
+    for _, u in nearby_10km:
+        targets[u.id] = u
+        
+    # Step 2b: If needed, 50km search
+    if len(targets) < 3:
+        needed = 3 - len(targets)
+        nearby_50km = find_targets(50.0, needed, list(targets.keys()))
+        for _, u in nearby_50km:
+            targets[u.id] = u
+            
+    # 3. Send SOS Message to targets
+    timestamp = int(time.time() * 1000)
+    
+    for target_id in targets:
+        msg = Message(
+            sender_id=current_user.id,
+            receiver_id=target_id,
+            content=sos.message, # Contains full JSON or formatted text
+            type='sos', # Special type for card rendering
+            timestamp=timestamp,
+            is_read=False
+        )
+        db.add(msg)
+        
+    db.commit()
     
     out = SOSOut.from_orm(db_sos)
     out.user_name = current_user.nickname

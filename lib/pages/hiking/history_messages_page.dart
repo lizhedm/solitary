@@ -125,8 +125,8 @@ class _HistoryMessagesPageState extends State<HistoryMessagesPage> {
   Widget _buildSnapButton(Map<String, dynamic> p) {
     final status = p['snapStatus'] as String;
     
-    if (status == 'FRIENDS') {
-      return const Text('已互助', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold));
+    if (status == 'FRIENDS' || status == 'MATCHED') {
+      return const Text('已成为好友', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold));
     }
     
     if (status == 'SNAPPED') {
@@ -134,10 +134,6 @@ class _HistoryMessagesPageState extends State<HistoryMessagesPage> {
         onPressed: null,
         child: Text('等待对方', style: TextStyle(color: Colors.grey.shade400)),
       );
-    }
-    
-    if (status == 'MATCHED') {
-      return const Text('合拍成功!', style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold));
     }
 
     return ElevatedButton(
@@ -164,7 +160,7 @@ class _HistoryMessagesPageState extends State<HistoryMessagesPage> {
         
         if (newStatus == 'MATCHED') {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('合拍成功！你们现在是好友了，可以在消息中心聊天。')),
+            const SnackBar(content: Text('已成为好友！可以在消息中心聊天。')),
           );
         } else {
           ScaffoldMessenger.of(context).showSnackBar(

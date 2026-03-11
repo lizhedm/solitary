@@ -2,9 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:solitary/services/api_service.dart';
+import 'package:provider/provider.dart';
+import 'package:solitary/providers/auth_provider.dart';
+import 'dart:convert';
+import 'package:intl/intl.dart';
 
 class SOSDetailPage extends StatefulWidget {
-  const SOSDetailPage({super.key});
+  final double? latitude;
+  final double? longitude;
+  final String? address;
+
+  const SOSDetailPage({
+    super.key,
+    this.latitude,
+    this.longitude,
+    this.address,
+  });
 
   @override
   State<SOSDetailPage> createState() => _SOSDetailPageState();
@@ -17,6 +31,7 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
   final TextEditingController _descriptionController = TextEditingController();
   final List<XFile> _photos = [];
   final ImagePicker _picker = ImagePicker();
+  bool _isSubmitting = false;
 
   final List<Map<String, dynamic>> _dangerTypes = [
     {
@@ -68,12 +83,44 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
 
   Future<void> _takePhoto() async {
     if (_photos.length >= 3) return;
-    final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
-    if (photo != null) {
-      setState(() {
-        _photos.add(photo);
-      });
-    }
+
+    showModalBottomSheet(
+      context: context,
+      builder: (BuildContext context) {
+        return SafeArea(
+          child: Wrap(
+            children: <Widget>[
+              ListTile(
+                leading: const Icon(Icons.photo_library),
+                title: const Text('从相册选择'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  final XFile? photo = await _picker.pickImage(source: ImageSource.gallery);
+                  if (photo != null) {
+                    setState(() {
+                      _photos.add(photo);
+                    });
+                  }
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_alt),
+                title: const Text('拍照'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
+                  if (photo != null) {
+                    setState(() {
+                      _photos.add(photo);
+                    });
+                  }
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   // Build a web-friendly photo widget without using dart:io
@@ -93,6 +140,72 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
         return Container(width: 100, height: 100, color: Colors.grey.shade200);
       },
     );
+  }
+
+  Future<void> _submitSOS() async {
+    if (_isSubmitting) return;
+
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final user = authProvider.user;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先登录')),
+      );
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+    });
+
+    try {
+      final now = DateTime.now();
+      final timeStr = DateFormat('yyyy.MM.dd HH:mm:ss').format(now);
+      final lat = widget.latitude ?? user.currentLat ?? 0.0;
+      final lng = widget.longitude ?? user.currentLng ?? 0.0;
+      
+      // Construct detailed message JSON
+      final messageData = {
+        'type': 'sos_card',
+        'danger_type': _selectedDangerType,
+        'danger_label': _dangerTypes.firstWhere((t) => t['id'] == _selectedDangerType)['label'],
+        'safety_status': _safetyStatus, // 0: Danger, 1: Temp Safe, 2: Safe
+        'urgent_items': _selectedItems,
+        'urgent_labels': _urgentItems.where((i) => _selectedItems.contains(i['id'])).map((i) => i['label']).toList(),
+        'description': _descriptionController.text,
+        'latitude': lat,
+        'longitude': lng,
+        'address': widget.address ?? '未知位置',
+        'time': timeStr,
+      };
+
+      final response = await ApiService().post('/messages/sos', data: {
+        'latitude': lat,
+        'longitude': lng,
+        'message': jsonEncode(messageData), // Send structured data as JSON string
+      });
+
+      if (response.statusCode == 200) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('求救信息已发送给周围用户')),
+        );
+        Navigator.pop(context, true); // Return success
+      } else {
+        throw Exception('Failed to send SOS');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('发送失败: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
+    }
   }
 
   @override
@@ -368,19 +481,15 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
               children: [
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: () {
-                      // Update SOS info
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('求救信息已更新并推送')),
-                      );
-                      Navigator.pop(context);
-                    },
+                    onPressed: _isSubmitting ? null : _submitSOS,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF2E7D32),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                     ),
-                    child: const Text('更新求救信息'),
+                    child: _isSubmitting 
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : const Text('更新求救信息'),
                   ),
                 ),
                 if (_safetyStatus == 2) ...[

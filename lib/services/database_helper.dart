@@ -22,7 +22,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -70,6 +70,7 @@ class DatabaseHelper {
         end_location TEXT,
         map_snapshot_url TEXT,
         coordinates_json TEXT,
+        message_count INTEGER DEFAULT 0,
         sync_status INTEGER DEFAULT 0 
       )
     ''');
@@ -142,6 +143,10 @@ class DatabaseHelper {
     }
     if (oldVersion < 6) {
       // Ensure message_count column exists
+      try { await db.execute('ALTER TABLE hiking_records ADD COLUMN message_count INTEGER DEFAULT 0'); } catch (_) {}
+    }
+    if (oldVersion < 7) {
+      // Ensure message_count column exists (again, for cases where v6 didn't have it due to missing onCreate)
       try { await db.execute('ALTER TABLE hiking_records ADD COLUMN message_count INTEGER DEFAULT 0'); } catch (_) {}
     }
   }

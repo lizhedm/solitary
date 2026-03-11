@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../models/message.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/message_provider.dart';
+import 'dart:convert';
 
 class ChatPage extends StatefulWidget {
   final String title;
@@ -107,6 +108,141 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  Widget _buildMessageContent(Message msg, bool isMe) {
+    if (msg.type == 'sos') {
+      try {
+        final data = jsonDecode(msg.content);
+        return _buildSOSCard(data);
+      } catch (e) {
+        return Text(
+          msg.content,
+          style: TextStyle(color: isMe ? Colors.white : Colors.black87),
+        );
+      }
+    }
+    
+    return Text(
+      msg.content,
+      style: TextStyle(color: isMe ? Colors.white : Colors.black87),
+    );
+  }
+
+  Widget _buildSOSCard(Map<String, dynamic> data) {
+    final dangerType = data['danger_label'] ?? '未知危险';
+    final safetyStatus = data['safety_status'] ?? 0;
+    final urgentLabels = (data['urgent_labels'] as List?)?.join('、') ?? '无';
+    final description = data['description'] ?? '';
+    final address = data['address'] ?? '';
+    final time = data['time'] ?? '';
+    final lat = data['latitude'];
+    final lng = data['longitude'];
+
+    Color statusColor;
+    String statusText;
+    if (safetyStatus == 2) {
+      statusColor = Colors.green;
+      statusText = '已脱险';
+    } else if (safetyStatus == 1) {
+      statusColor = Colors.orange;
+      statusText = '暂时安全';
+    } else {
+      statusColor = Colors.red;
+      statusText = '仍危险';
+    }
+
+    return Container(
+      width: 260,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.red.shade100),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 20),
+              const SizedBox(width: 8),
+              Text(
+                'SOS 求救信号',
+                style: TextStyle(
+                  color: Colors.red.shade900,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+            ],
+          ),
+          const Divider(height: 16),
+          
+          // Info Rows
+          _buildInfoRow('危险类型', dangerType, isBold: true),
+          const SizedBox(height: 4),
+          _buildInfoRow('安全状态', statusText, color: statusColor, isBold: true),
+          const SizedBox(height: 4),
+          _buildInfoRow('急需物品', urgentLabels),
+          
+          if (description.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            const Text('具体描述:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            Text(description, style: const TextStyle(fontSize: 14)),
+          ],
+          
+          const Divider(height: 16),
+          
+          // Location
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.location_on, size: 16, color: Colors.grey),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(address, style: const TextStyle(fontSize: 12)),
+                    if (lat != null && lng != null)
+                      Text(
+                        '【GCJ02】${lat.toStringAsFixed(6)}°N, ${lng.toStringAsFixed(6)}°E',
+                        style: const TextStyle(fontSize: 10, color: Colors.grey),
+                      ),
+                    if (time.isNotEmpty)
+                      Text(
+                        '更新时间: $time',
+                        style: const TextStyle(fontSize: 10, color: Colors.grey),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value, {Color? color, bool isBold = false}) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('$label: ', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+        Expanded(
+          child: Text(
+            value,
+            style: TextStyle(
+              fontSize: 14,
+              color: color ?? Colors.black87,
+              fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
@@ -166,10 +302,7 @@ class _ChatPageState extends State<ChatPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                msg.content,
-                                style: TextStyle(color: isMe ? Colors.white : Colors.black87),
-                              ),
+                              _buildMessageContent(msg, isMe),
                               const SizedBox(height: 4),
                               Text(
                                 _formatTime(msg.timestamp),
