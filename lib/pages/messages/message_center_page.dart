@@ -314,9 +314,17 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                 
                 // Format content based on type
                 if (type == 'sos') {
-                  content = '[SOS求救] 点击查看详情';
+                  if (senderId == currentUserId) {
+                    content = '[SOS求救] 我发出的求救';
+                  } else {
+                    content = '[SOS求救] 收到求救信号';
+                  }
                 } else if (type == 'question') {
-                  content = '收到提问: $content';
+                  if (senderId == currentUserId) {
+                    content = '我的提问: $content';
+                  } else {
+                    content = '收到提问: $content';
+                  }
                 }
 
                 incomingMap[partnerId] = {
