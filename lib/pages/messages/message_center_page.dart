@@ -283,7 +283,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
               
               // Containers for final result
               final Map<String, Map<String, dynamic>> myQuestionsMap = {}; // Grouped by content
-              final Map<int, Map<String, dynamic>> incomingMap = {}; // Grouped by partnerId
+              final Map<String, Map<String, dynamic>> incomingMap = {}; // Key: "type_direction_partnerId_content"
               
               for (var msg in allMessages) {
                 final type = msg['type'] as String? ?? 'text';
@@ -292,6 +292,8 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                 final hikeId = msg['hike_id'] as int?;
                 
                 // 1. My Questions (Sent by me, type=question, not in hike)
+                // We keep grouping by content for broadcasts to avoid list explosion,
+                // but these are already separate from other types with the same partner.
                 if (senderId == currentUserId && type == 'question' && (hikeId == null || hikeId == 0)) {
                   final content = msg['content'] as String;
                   if (!myQuestionsMap.containsKey(content)) {
@@ -314,12 +316,15 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                 // 2. Incoming Questions (Received by me, type=question, not in hike)
                 if (receiverId == currentUserId && type == 'question' && (hikeId == null || hikeId == 0)) {
                    final partnerId = senderId;
-                   // Logic: Keep latest message per partner
-                   if (incomingMap.containsKey(partnerId)) {
-                      final existingTime = (incomingMap[partnerId]!['msg'] as Map)['timestamp'] as int;
+                   final content = msg['content'] as String;
+                   // Use content in key to show different questions from same partner as separate entries
+                   final key = "question_incoming_${partnerId}_$content";
+                   
+                   if (incomingMap.containsKey(key)) {
+                      final existingTime = (incomingMap[key]!['msg'] as Map)['timestamp'] as int;
                       if ((msg['timestamp'] as int) < existingTime) continue;
                    }
-                   incomingMap[partnerId] = {
+                   incomingMap[key] = {
                      'msg': msg,
                      'type': 'question',
                      'partner_id': partnerId
@@ -329,14 +334,17 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                 
                 // 3. SOS Messages (Sent OR Received, type=sos, IGNORE hike_id)
                 if (type == 'sos') {
-                   final partnerId = (senderId == currentUserId) ? receiverId : senderId;
+                   final isOutgoing = senderId == currentUserId;
+                   final partnerId = isOutgoing ? receiverId : senderId;
+                   // Separate by direction and partner. 
+                   // Different SOS events with same partner are usually updates, so we keep latest.
+                   final key = "sos_${isOutgoing ? 'outgoing' : 'incoming'}_$partnerId";
                    
-                   // Logic: Keep latest message per partner (SOS overrides others if newer)
-                   if (incomingMap.containsKey(partnerId)) {
-                      final existingTime = (incomingMap[partnerId]!['msg'] as Map)['timestamp'] as int;
+                   if (incomingMap.containsKey(key)) {
+                      final existingTime = (incomingMap[key]!['msg'] as Map)['timestamp'] as int;
                       if ((msg['timestamp'] as int) < existingTime) continue;
                    }
-                   incomingMap[partnerId] = {
+                   incomingMap[key] = {
                      'msg': msg,
                      'type': 'sos',
                      'partner_id': partnerId

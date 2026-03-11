@@ -8,7 +8,15 @@ import '../messages/chat_page.dart';
 
 class HistoryMessagesPage extends StatefulWidget {
   final int hikeId;
-  const HistoryMessagesPage({super.key, required this.hikeId});
+  final DateTime startTime;
+  final DateTime endTime;
+  
+  const HistoryMessagesPage({
+    super.key, 
+    required this.hikeId, 
+    required this.startTime, 
+    required this.endTime
+  });
 
   @override
   State<HistoryMessagesPage> createState() => _HistoryMessagesPageState();
@@ -106,7 +114,9 @@ class _HistoryMessagesPageState extends State<HistoryMessagesPage> {
                               title: p['name'] as String,
                               avatar: p['avatar'] as String?,
                               partnerId: p['id'] as int,
-                              hikeId: widget.hikeId, // Pass hikeId to show only hike messages
+                              hikeId: widget.hikeId, 
+                              startTime: widget.startTime,
+                              endTime: widget.endTime,
                             ),
                           ),
                         );
@@ -176,7 +186,16 @@ class _HistoryMessagesPageState extends State<HistoryMessagesPage> {
   }
 
   Future<List<Map<String, dynamic>>> _loadHistoryParticipants(int currentUserId) async {
-    final messages = await DatabaseHelper().getMessagesByHikeId(widget.hikeId);
+    // Priority 1: Query by our specific hikeId using the new logic
+    List<Map<String, dynamic>> messages = await DatabaseHelper().getMessagesByHikeId(widget.hikeId, currentUserId);
+    
+    // Priority 2: If no messages associated yet, fallback to time range
+    if (messages.isEmpty) {
+      final startTs = widget.startTime.millisecondsSinceEpoch;
+      final endTs = widget.endTime.millisecondsSinceEpoch;
+      messages = await DatabaseHelper().getMessagesByTimeRange(startTs, endTs);
+    }
+    
     final Map<int, int> msgCounts = {};
     
     // Group by partner

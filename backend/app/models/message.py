@@ -14,7 +14,8 @@ class Message(Base):
     timestamp = Column(BigInteger)
     is_read = Column(Boolean, default=False)
     
-    hike_id = Column(Integer, ForeignKey("hiking_records.id"), nullable=True)
+    sender_hike_id = Column(Integer, ForeignKey("hiking_records.id"), nullable=True)
+    receiver_hike_id = Column(Integer, ForeignKey("hiking_records.id"), nullable=True)
     
     sender = relationship("User", foreign_keys=[sender_id])
     receiver = relationship("User", foreign_keys=[receiver_id])

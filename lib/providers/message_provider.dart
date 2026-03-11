@@ -205,7 +205,7 @@ class MessageProvider with ChangeNotifier {
     }
   }
   
-  Future<List<Message>> getMessagesForContact(int currentUserId, int partnerId, {int? hikeId}) async {
+  Future<List<Message>> getMessagesForContact(int currentUserId, int partnerId, {int? hikeId, DateTime? startTime, DateTime? endTime}) async {
     // 1. Get unread remote IDs to sync with server
     final unreadIds = await DatabaseHelper().getUnreadMessageIds(partnerId, currentUserId);
     
@@ -229,8 +229,20 @@ class MessageProvider with ChangeNotifier {
     List<Map<String, dynamic>> list;
     if (hikeId != null) {
       // Fetch messages for a specific hike with this partner
-      final allHikeMessages = await DatabaseHelper().getMessagesByHikeId(hikeId);
+      final allHikeMessages = await DatabaseHelper().getMessagesByHikeId(hikeId, currentUserId);
       list = allHikeMessages.where((msg) {
+        final senderId = msg['sender_id'] as int;
+        final receiverId = msg['receiver_id'] as int;
+        return (senderId == currentUserId && receiverId == partnerId) || 
+               (senderId == partnerId && receiverId == currentUserId);
+      }).toList();
+    } else if (startTime != null && endTime != null) {
+      // Fetch messages for a specific time range (more reliable than hikeId)
+      final allRangeMessages = await DatabaseHelper().getMessagesByTimeRange(
+        startTime.millisecondsSinceEpoch, 
+        endTime.millisecondsSinceEpoch
+      );
+      list = allRangeMessages.where((msg) {
         final senderId = msg['sender_id'] as int;
         final receiverId = msg['receiver_id'] as int;
         return (senderId == currentUserId && receiverId == partnerId) || 

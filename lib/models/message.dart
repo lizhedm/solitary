@@ -7,6 +7,8 @@ class Message {
   final int timestamp;
   final bool isRead;
   final int? hikeId;
+  final int? senderHikeId;
+  final int? receiverHikeId;
   
   Message({
     required this.id,
@@ -16,7 +18,9 @@ class Message {
     required this.type,
     required this.timestamp,
     required this.isRead,
-    this.hikeId
+    this.hikeId,
+    this.senderHikeId,
+    this.receiverHikeId,
   });
   
   factory Message.fromJson(Map<String, dynamic> json) {
@@ -28,7 +32,9 @@ class Message {
       type: json['type'],
       timestamp: json['timestamp'],
       isRead: (json['is_read'] is int) ? (json['is_read'] == 1) : (json['is_read'] ?? false),
-      hikeId: json['hike_id']
+      hikeId: json['hike_id'],
+      senderHikeId: json['sender_hike_id'],
+      receiverHikeId: json['receiver_hike_id'],
     );
   }
   
@@ -41,7 +47,9 @@ class Message {
       'type': type,
       'timestamp': timestamp,
       'is_read': isRead ? 1 : 0,
-      'hike_id': hikeId
+      'hike_id': hikeId,
+      'sender_hike_id': senderHikeId,
+      'receiver_hike_id': receiverHikeId,
     };
   }
 }

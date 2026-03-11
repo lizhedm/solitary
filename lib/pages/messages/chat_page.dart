@@ -10,7 +10,9 @@ class ChatPage extends StatefulWidget {
   final String title;
   final String? avatar;
   final int partnerId;
-  final int? hikeId; // Add hikeId for history mode
+  final int? hikeId; // Keep for compatibility
+  final DateTime? startTime;
+  final DateTime? endTime;
 
   const ChatPage({
     super.key, 
@@ -18,6 +20,8 @@ class ChatPage extends StatefulWidget {
     this.avatar,
     required this.partnerId,
     this.hikeId,
+    this.startTime,
+    this.endTime,
   });
 
   @override
@@ -67,7 +71,9 @@ class _ChatPageState extends State<ChatPage> {
     final msgs = await msgProvider.getMessagesForContact(
       authProvider.user!.id, 
       widget.partnerId,
-      hikeId: widget.hikeId, // Pass hikeId if present
+      hikeId: widget.hikeId,
+      startTime: widget.startTime,
+      endTime: widget.endTime,
     );
 
     if (mounted) {

@@ -22,7 +22,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 7,
+      version: 8,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -149,6 +149,11 @@ class DatabaseHelper {
       // Ensure message_count column exists (again, for cases where v6 didn't have it due to missing onCreate)
       try { await db.execute('ALTER TABLE hiking_records ADD COLUMN message_count INTEGER DEFAULT 0'); } catch (_) {}
     }
+    if (oldVersion < 8) {
+      // Add sender_hike_id and receiver_hike_id to messages
+      try { await db.execute('ALTER TABLE messages ADD COLUMN sender_hike_id INTEGER'); } catch (_) {}
+      try { await db.execute('ALTER TABLE messages ADD COLUMN receiver_hike_id INTEGER'); } catch (_) {}
+    }
   }
   
   Future<void> _createMessageTables(Database db) async {
@@ -164,6 +169,8 @@ class DatabaseHelper {
         timestamp INTEGER,
         is_read INTEGER DEFAULT 0,
         hike_id INTEGER,
+        sender_hike_id INTEGER,
+        receiver_hike_id INTEGER,
         sync_status INTEGER DEFAULT 0
       )
     ''');
@@ -308,20 +315,42 @@ class DatabaseHelper {
 
   Future<int> associateMessagesWithHike(int hikeId, int userId, int startTime, int endTime) async {
     final db = await database;
-    return await db.update(
+    
+    // 1. Update sender_hike_id for messages sent by user
+    int senderCount = await db.update(
       'messages',
-      {'hike_id': hikeId},
-      where: '((sender_id = ? OR receiver_id = ?) AND timestamp >= ? AND timestamp <= ?)',
-      whereArgs: [userId, userId, startTime * 1000, endTime * 1000],
+      {'sender_hike_id': hikeId},
+      where: 'sender_id = ? AND timestamp >= ? AND timestamp <= ?',
+      whereArgs: [userId, startTime * 1000, endTime * 1000],
     );
+
+    // 2. Update receiver_hike_id for messages received by user
+    int receiverCount = await db.update(
+      'messages',
+      {'receiver_hike_id': hikeId},
+      where: 'receiver_id = ? AND timestamp >= ? AND timestamp <= ?',
+      whereArgs: [userId, startTime * 1000, endTime * 1000],
+    );
+
+    return senderCount + receiverCount;
   }
 
-  Future<List<Map<String, dynamic>>> getMessagesByHikeId(int hikeId) async {
+  Future<List<Map<String, dynamic>>> getMessagesByHikeId(int hikeId, int currentUserId) async {
     final db = await database;
     return await db.query(
       'messages',
-      where: 'hike_id = ?',
-      whereArgs: [hikeId],
+      where: '(sender_id = ? AND sender_hike_id = ?) OR (receiver_id = ? AND receiver_hike_id = ?)',
+      whereArgs: [currentUserId, hikeId, currentUserId, hikeId],
+      orderBy: 'timestamp ASC',
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getMessagesByTimeRange(int startTime, int endTime) async {
+    final db = await database;
+    return await db.query(
+      'messages',
+      where: 'timestamp >= ? AND timestamp <= ?',
+      whereArgs: [startTime, endTime],
       orderBy: 'timestamp ASC',
     );
   }

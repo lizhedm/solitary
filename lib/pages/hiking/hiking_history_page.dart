@@ -470,13 +470,17 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
                       title: const Text('查看临时会话'),
                       subtitle: Text('${record.messageCount} 条消息'),
                       trailing: const Icon(Icons.chevron_right),
-                      onTap: () {
-                        // Pass record id
+                        onTap: () {
+                        // Pass record id and time range
                         final recordId = int.tryParse(record.id) ?? 0;
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => HistoryMessagesPage(hikeId: recordId),
+                            builder: (context) => HistoryMessagesPage(
+                              hikeId: recordId,
+                              startTime: record.startTime,
+                              endTime: record.endTime,
+                            ),
                           ),
                         );
                       },

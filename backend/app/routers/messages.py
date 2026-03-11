@@ -359,16 +359,22 @@ def associate_messages(
     """
     将用户在指定时间段内产生的所有消息关联到某个徒步记录 hike_id
     """
-    # 更新发送或接收的所有在该时间范围内的消息
-    # 时间是毫秒级
-    updated_count = db.query(Message).filter(
-        (Message.sender_id == current_user.id) | (Message.receiver_id == current_user.id),
+    # 1. Update sender_hike_id where current user is the sender
+    sender_updated = db.query(Message).filter(
+        Message.sender_id == current_user.id,
         Message.timestamp >= req.start_time,
         Message.timestamp <= req.end_time
-    ).update({"hike_id": req.hike_id}, synchronize_session=False)
+    ).update({"sender_hike_id": req.hike_id}, synchronize_session=False)
+    
+    # 2. Update receiver_hike_id where current user is the receiver
+    receiver_updated = db.query(Message).filter(
+        Message.receiver_id == current_user.id,
+        Message.timestamp >= req.start_time,
+        Message.timestamp <= req.end_time
+    ).update({"receiver_hike_id": req.hike_id}, synchronize_session=False)
     
     db.commit()
-    return {"success": True, "updated_count": updated_count}
+    return {"success": True, "updated_count": sender_updated + receiver_updated}
 
 # --- SOS Models ---
 class SOSOut(BaseModel):
