@@ -267,7 +267,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       ? CachedNetworkImage(
                           imageUrl: user!.avatar!.startsWith('http') 
                               ? '${user.avatar!}?v=${authProvider.avatarVersion}'
-                              : 'http://114.55.148.245:8000${user.avatar!}?v=${authProvider.avatarVersion}',
+                              : 'http://8.136.205.255:8000${user.avatar!}?v=${authProvider.avatarVersion}',
                           imageBuilder: (context, imageProvider) => CircleAvatar(
                             radius: 32,
                             backgroundImage: imageProvider,

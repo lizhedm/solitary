@@ -168,7 +168,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                       ? CachedNetworkImage(
                           imageUrl: avatarUrl.startsWith('http') 
                               ? avatarUrl 
-                              : 'http://114.55.148.245:8000$avatarUrl',
+                              : 'http://8.136.205.255:8000$avatarUrl',
                           imageBuilder: (context, imageProvider) => CircleAvatar(
                             backgroundImage: imageProvider,
                           ),
@@ -356,24 +356,26 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                  final senderId = msg['sender_id'] as int;
                  
                  // Get partner info
-                 String name = '用户 $partnerId';
+                 String name = partnerId == 0 ? '所有人 (SOS广播)' : '用户 $partnerId';
                  String avatar = '';
                  
-                 var contact = await DatabaseHelper().getContact(partnerId);
-                 if (contact != null) {
-                    name = contact['nickname'] ?? name;
-                    avatar = contact['avatar'] ?? avatar;
-                 } else {
-                    try {
-                      final response = await ApiService().get('/users/$partnerId');
-                      if (response.statusCode == 200 && response.data != null) {
-                        final user = response.data;
-                        name = user['nickname'] ?? name;
-                        avatar = user['avatar'] ?? avatar;
+                 if (partnerId != 0) {
+                   var contact = await DatabaseHelper().getContact(partnerId);
+                   if (contact != null) {
+                      name = contact['nickname'] ?? name;
+                      avatar = contact['avatar'] ?? avatar;
+                   } else {
+                      try {
+                        final response = await ApiService().get('/users/$partnerId');
+                        if (response.statusCode == 200 && response.data != null) {
+                          final user = response.data;
+                          name = user['nickname'] ?? name;
+                          avatar = user['avatar'] ?? avatar;
+                        }
+                      } catch (e) {
+                        debugPrint('Error fetching user info for $partnerId: $e');
                       }
-                    } catch (e) {
-                      debugPrint('Error fetching user info for $partnerId: $e');
-                    }
+                   }
                  }
                  
                  String content = msg['content'] as String;
@@ -381,7 +383,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                  // Format content for display
                  if (type == 'sos') {
                     if (senderId == currentUserId) {
-                      content = '[SOS求救] 我向他发出了求救';
+                      content = partnerId == 0 ? '[SOS求救] 我已发出求救广播' : '[SOS求救] 我向他发出了求救';
                     } else {
                       content = '[SOS求救] 收到他的求救信号';
                     }
@@ -483,7 +485,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                               backgroundImage: CachedNetworkImageProvider(
                                 partnerAvatar.startsWith('http') 
                                   ? partnerAvatar 
-                                  : 'http://114.55.148.245:8000$partnerAvatar'
+                                  : 'http://8.136.205.255:8000$partnerAvatar'
                               ),
                             )
                           : CircleAvatar(
@@ -669,7 +671,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                               itemBuilder: (context, pIndex) {
                                 String url = photos[pIndex];
                                 if (!url.startsWith('http')) {
-                                  url = 'http://114.55.148.245:8000$url';
+                                  url = 'http://8.136.205.255:8000$url';
                                 }
                                 return ClipRRect(
                                   borderRadius: BorderRadius.circular(8),

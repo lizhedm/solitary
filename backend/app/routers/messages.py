@@ -276,12 +276,35 @@ def get_conversations(
     
     partner_ids = set()
     for (pid,) in sent_to:
-        if pid: partner_ids.add(pid)
+        if pid is not None: partner_ids.add(pid)
     for (pid,) in received_from:
-        if pid: partner_ids.add(pid)
+        if pid is not None: partner_ids.add(pid)
         
     conversations = []
     for pid in partner_ids:
+        if pid == 0:
+            # Special case for broadcast/SOS
+            last_msg = db.query(Message).filter(
+                Message.sender_id == current_user.id,
+                Message.receiver_id == 0
+            ).order_by(Message.timestamp.desc()).first()
+            
+            if last_msg:
+                conversations.append({
+                    "partner": {
+                        "id": 0,
+                        "nickname": "所有人 (SOS广播)",
+                        "avatar": None
+                    },
+                    "last_message": {
+                        "content": last_msg.content,
+                        "type": last_msg.type,
+                        "timestamp": last_msg.timestamp
+                    },
+                    "unread_count": 0
+                })
+            continue
+
         partner = db.query(User).filter(User.id == pid).first()
         if not partner: continue
         
@@ -434,9 +457,19 @@ def create_sos(
         for _, u in nearby_50km:
             targets[u.id] = u
             
-    # 3. Send SOS Message to targets
+    # 3. Always create a broadcast message for the sender to see in their message center
     timestamp = int(time.time() * 1000)
-    
+    broadcast_msg = Message(
+        sender_id=current_user.id,
+        receiver_id=0, # 0 means broadcast or everyone
+        content=sos.message,
+        type='sos',
+        timestamp=timestamp,
+        is_read=True # Mark as read for the sender
+    )
+    db.add(broadcast_msg)
+
+    # 4. Send SOS Message to targets
     for target_id in targets:
         # Create message for receiver
         msg_to_target = Message(

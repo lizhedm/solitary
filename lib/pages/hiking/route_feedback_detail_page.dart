@@ -103,14 +103,14 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
                       itemBuilder: (context, index) {
                         String url = photos[index];
                         if (!url.startsWith('http')) {
-                          url = 'http://114.55.148.245:8000$url';
+                          url = 'http://8.136.205.255:8000$url';
                         }
                         return GestureDetector(
                           onTap: () {
                             // Prepare full URLs for viewer
                             final fullUrls = photos.map((p) {
                               if (!p.startsWith('http')) {
-                                return 'http://114.55.148.245:8000$p';
+                                return 'http://8.136.205.255:8000$p';
                               }
                               return p;
                             }).toList();

@@ -3,6 +3,7 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:solitary/services/api_service.dart';
+import 'package:solitary/services/database_helper.dart';
 import 'package:provider/provider.dart';
 import 'package:solitary/providers/auth_provider.dart';
 import 'dart:convert';
@@ -186,6 +187,22 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
       });
 
       if (response.statusCode == 200) {
+        // Save locally for immediate feedback in Message Center
+        try {
+          await DatabaseHelper().saveMessage({
+            'sender_id': user.id,
+            'receiver_id': 0, // Broadcast
+            'content': jsonEncode(messageData),
+            'type': 'sos',
+            'timestamp': now.millisecondsSinceEpoch,
+            'is_read': 1,
+            'sync_status': 0,
+            'remote_id': response.data['id'] // Assuming backend returns the SOSAlert ID or similar
+          });
+        } catch (dbError) {
+          debugPrint('Failed to save SOS message locally: $dbError');
+        }
+
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('求救信息已发送给周围用户')),

@@ -113,7 +113,7 @@ class _QuestionRepliesPageState extends State<QuestionRepliesPage> {
                           backgroundImage: CachedNetworkImageProvider(
                             avatar.startsWith('http') 
                               ? avatar 
-                              : 'http://114.55.148.245:8000$avatar'
+                              : 'http://8.136.205.255:8000$avatar'
                           ),
                         )
                       : CircleAvatar(

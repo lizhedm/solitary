@@ -12,7 +12,7 @@ class ApiService {
   ApiService._internal() {
     _dio = Dio(
       BaseOptions(
-        baseUrl: 'http://114.55.148.245:8000', // 云端后端地址，默认统一访问云服务器
+        baseUrl: 'http://8.136.205.255:8000', // 云端后端地址，默认统一访问云服务器
         connectTimeout: const Duration(seconds: 30), // 连接超时时间
         receiveTimeout: const Duration(seconds: 60), // 接收超时时间
       ),

@@ -283,7 +283,7 @@ class _HikingMapPageState extends State<HikingMapPage>
         if (user['avatar'] != null && user['avatar'].toString().isNotEmpty) {
             String avatarUrl = user['avatar'];
             if (!avatarUrl.startsWith('http')) {
-               avatarUrl = 'http://114.55.148.245:8000$avatarUrl';
+               avatarUrl = 'http://8.136.205.255:8000$avatarUrl';
             }
             final bytes = await _downloadAndCropAvatar(
                 avatarUrl, 

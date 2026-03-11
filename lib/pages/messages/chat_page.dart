@@ -260,7 +260,7 @@ class _ChatPageState extends State<ChatPage> {
                   backgroundImage: CachedNetworkImageProvider(
                     widget.avatar!.startsWith('http') 
                       ? widget.avatar! 
-                      : 'http://114.55.148.245:8000${widget.avatar!}'
+                      : 'http://8.136.205.255:8000${widget.avatar!}'
                   ),
                 ),
               ),

@@ -14,7 +14,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // 统一的云端后端地址
-  final String baseUrl = 'http://114.55.148.245:8000';
+  final String baseUrl = 'http://8.136.205.255:8000';
 
   // 应用启动时设置全局 API 基地址
   ApiService().updateBaseUrl(baseUrl);

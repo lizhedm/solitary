@@ -84,7 +84,7 @@ class _HistoryMessagesPageState extends State<HistoryMessagesPage> {
                           ? CachedNetworkImage(
                               imageUrl: avatarUrl.startsWith('http') 
                                   ? avatarUrl 
-                                  : 'http://114.55.148.245:8000$avatarUrl',
+                                  : 'http://8.136.205.255:8000$avatarUrl',
                               imageBuilder: (context, imageProvider) => CircleAvatar(
                                 backgroundImage: imageProvider,
                               ),

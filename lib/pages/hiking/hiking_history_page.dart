@@ -119,7 +119,7 @@ class _HikingHistoryPageState extends State<HikingHistoryPage> {
   String _getCorrectedImageUrl(String? url) {
     if (url == null || url.isEmpty) return '';
     if (url.startsWith('http')) return url;
-    return 'http://114.55.148.245:8000$url';
+    return 'http://8.136.205.255:8000$url';
   }
 
   @override
@@ -349,7 +349,7 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
   String _getCorrectedImageUrl(String? url) {
     if (url == null || url.isEmpty) return '';
     if (url.startsWith('http')) return url;
-    return 'http://114.55.148.245:8000$url';
+    return 'http://8.136.205.255:8000$url';
   }
 
   @override
