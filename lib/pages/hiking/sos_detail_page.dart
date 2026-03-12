@@ -33,6 +33,7 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
   final List<XFile> _photos = [];
   final ImagePicker _picker = ImagePicker();
   bool _isSubmitting = false;
+  String _recipientSummaryText = '求救信号将发送给周围 3 位用户';
 
   final List<Map<String, dynamic>> _dangerTypes = [
     {
@@ -187,6 +188,29 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
       });
 
       if (response.statusCode == 200) {
+        final data = response.data;
+
+        // 后端返回本次 SOS 实际广播到的用户列表 recipients
+        final List<dynamic> recipients = (data['recipients'] as List?) ?? [];
+        final int count = recipients.length;
+        final List<String> names = recipients
+            .map((e) => (e['nickname'] as String?)?.trim())
+            .whereType<String>()
+            .where((name) => name.isNotEmpty)
+            .toList();
+
+        setState(() {
+          if (count > 0) {
+            final displayNames = names.isNotEmpty
+                ? names.join('、')
+                : recipients.map((e) => '用户${e['id']}').join('、');
+            _recipientSummaryText =
+                '求救信号已发给周围 $count 位用户：$displayNames';
+          } else {
+            _recipientSummaryText = '暂时没有找到符合条件的接收用户';
+          }
+        });
+
         // Save locally for immediate feedback in Message Center
         try {
           await DatabaseHelper().saveMessage({
@@ -197,7 +221,7 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
             'timestamp': now.millisecondsSinceEpoch,
             'is_read': 1,
             'sync_status': 0,
-            'remote_id': response.data['id'] // Assuming backend returns the SOSAlert ID or similar
+            'remote_id': data['id'], // SOSAlert ID
           });
         } catch (dbError) {
           debugPrint('Failed to save SOS message locally: $dbError');
@@ -205,9 +229,8 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
 
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('求救信息已发送给周围用户')),
+          const SnackBar(content: Text('求救信息已发送')),
         );
-        Navigator.pop(context, true); // Return success
       } else {
         throw Exception('Failed to send SOS');
       }
@@ -254,7 +277,7 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          '求救信号已发送给周围 3 位用户',
+                          _recipientSummaryText,
                           style: TextStyle(
                             color: Colors.red.shade900,
                             fontWeight: FontWeight.bold,

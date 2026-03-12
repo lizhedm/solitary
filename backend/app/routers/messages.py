@@ -395,6 +395,11 @@ def associate_messages(
     return {"success": True, "updated_count": sender_updated + receiver_updated}
 
 # --- SOS Models ---
+class SOSRecipient(BaseModel):
+    id: int
+    nickname: Optional[str] = None
+
+
 class SOSOut(BaseModel):
     id: int
     user_id: int
@@ -405,6 +410,8 @@ class SOSOut(BaseModel):
     status: str
     created_at: int
     resolved_at: Optional[int]
+    # 本次 SOS 实际广播到的用户（用于前端展示“已发送给 n 位用户：A、B、C”）
+    recipients: Optional[List[SOSRecipient]] = None
     
     class Config:
         from_attributes = True
@@ -500,17 +507,23 @@ def create_sos(
         msg_to_target = Message(
             sender_id=current_user.id,
             receiver_id=target_id,
-            content=sos.message, # Contains full JSON or formatted text
-            type='sos', # Special type for card rendering
+            content=sos.message,  # Contains full JSON or formatted text
+            type='sos',  # Special type for card rendering
             timestamp=timestamp,
-            is_read=False
+            is_read=False,
         )
         db.add(msg_to_target)
         
     db.commit()
     
+    # 准备返回给前端的接收者列表信息
+    recipient_list = [
+        SOSRecipient(id=u.id, nickname=u.nickname) for u in targets.values()
+    ]
+    
     out = SOSOut.from_orm(db_sos)
     out.user_name = current_user.nickname
+    out.recipients = recipient_list
     return out
 
 @router.get("/messages/sos", response_model=List[SOSOut])
