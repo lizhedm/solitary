@@ -450,31 +450,39 @@ def create_sos(
     # - If < 3, try 50km (fill up to 3 users)
     
     def find_targets(radius_km, limit, exclude_ids):
-        # We find active users (is_hiking=True) first
-        # In a real app, we might also alert non-hiking users if enabled
-        candidates = []
-        
-        # Get potential users from DB (bounding box approx)
-        # 1 deg lat ~= 111km. 50km ~= 0.45 deg. 10km ~= 0.09 deg.
-        delta = radius_km / 111.0 
-        
+        """
+        临时放宽条件：为了方便联调测试，先把所有 users 表中的其他用户都当作 SOS 目标用户。
+        原来的按距离 + receive_sos + 坐标过滤的逻辑先保留在下面（已注释），后续需要恢复时直接还原即可。
+        """
         users = db.query(User).filter(
             User.id != current_user.id,
             User.id.notin_(exclude_ids),
-            User.receive_sos == True,
-            User.current_lat >= sos.latitude - delta,
-            User.current_lat <= sos.latitude + delta,
-            User.current_lng >= sos.longitude - delta,
-            User.current_lng <= sos.longitude + delta
         ).all()
-        
-        for u in users:
-            if u.current_lat and u.current_lng:
-                dist = calculate_distance(sos.latitude, sos.longitude, u.current_lat, u.current_lng)
-                if dist <= radius_km:
-                    candidates.append((dist, u))
-        
-        candidates.sort(key=lambda x: x[0])
+
+        # 原始精细筛选逻辑（按距离和开关过滤）——暂时注释保留
+        # candidates = []
+        # delta = radius_km / 111.0 
+        # users = db.query(User).filter(
+        #     User.id != current_user.id,
+        #     User.id.notin_(exclude_ids),
+        #     User.receive_sos == True,
+        #     User.current_lat >= sos.latitude - delta,
+        #     User.current_lat <= sos.latitude + delta,
+        #     User.current_lng >= sos.longitude - delta,
+        #     User.current_lng <= sos.longitude + delta
+        # ).all()
+        #
+        # for u in users:
+        #     if u.current_lat and u.current_lng:
+        #         dist = calculate_distance(sos.latitude, sos.longitude, u.current_lat, u.current_lng)
+        #         if dist <= radius_km:
+        #             candidates.append((dist, u))
+        #
+        # candidates.sort(key=lambda x: x[0])
+        # return candidates[:limit]
+
+        # 简化：当前测试阶段直接返回全部符合 id 条件的用户（不做距离裁剪），数量上限仍然用 limit 控制
+        candidates = [(0.0, u) for u in users]
         return candidates[:limit]
 
     # Step 2a: 10km search
