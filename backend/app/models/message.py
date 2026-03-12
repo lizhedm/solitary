@@ -49,6 +49,7 @@ class SOSAlert(Base):
     latitude = Column(Float)
     longitude = Column(Float)
     message = Column(String)
+    photos = Column(String, nullable=True)  # JSON list of base64 strings (临时存DB，后续可换成URL列表)
     status = Column(String, default='ACTIVE') # ACTIVE, RESOLVED
     created_at = Column(BigInteger)
     resolved_at = Column(BigInteger, nullable=True)

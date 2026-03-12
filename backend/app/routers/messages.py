@@ -412,6 +412,7 @@ class SOSOut(BaseModel):
     resolved_at: Optional[int]
     # 本次 SOS 实际广播到的用户（用于前端展示“已发送给 n 位用户：A、B、C”）
     recipients: Optional[List[SOSRecipient]] = None
+    photos: Optional[List[str]] = None
     
     class Config:
         from_attributes = True
@@ -420,6 +421,7 @@ class SOSCreate(BaseModel):
     latitude: float
     longitude: float
     message: str
+    photos: Optional[List[str]] = None
 
 # --- SOS Endpoints (Placeholder for now, usually part of hiking or separate router, but putting here for map query) ---
 
@@ -445,6 +447,7 @@ def create_sos(
         latitude=center_lat,
         longitude=center_lng,
         message=sos.message,
+        photos=json.dumps(sos.photos) if sos.photos else None,
         status='ACTIVE',
         created_at=int(time.time() * 1000)
     )
@@ -568,6 +571,7 @@ def create_sos(
     out = SOSOut.from_orm(db_sos)
     out.user_name = current_user.nickname
     out.recipients = recipient_list
+    out.photos = sos.photos or []
     return out
 
 @router.get("/messages/sos", response_model=List[SOSOut])

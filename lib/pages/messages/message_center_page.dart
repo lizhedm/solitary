@@ -8,6 +8,7 @@ import '../../services/database_helper.dart';
 import 'chat_page.dart';
 import 'question_replies_page.dart';
 import '../hiking/route_feedback_detail_page.dart';
+import 'sos_event_detail_page.dart';
 
 import 'package:solitary/services/api_service.dart';
 
@@ -119,6 +120,28 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _miniTag(IconData icon, String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withOpacity(0.25)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            text,
+            style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600),
+          ),
+        ],
       ),
     );
   }
@@ -558,17 +581,38 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
             future: DatabaseHelper().database.then((db) async {
               debugPrint('Fetching all messages for temporary session list (v2)...');
 
+              // 仅展示“本次徒步（开始~结束）”时间段内的临时会话：
+              // 这里以本地 hiking_records 中 end_time 为空的记录作为“正在进行的徒步”标记。
+              final activeHike = await db.query(
+                'hiking_records',
+                where: 'user_id = ? AND end_time IS NULL',
+                whereArgs: [currentUserId],
+                orderBy: 'start_time DESC',
+                limit: 1,
+              );
+              if (activeHike.isEmpty) {
+                return {
+                  'my_questions': <Map<String, dynamic>>[],
+                  'incoming_questions': <Map<String, dynamic>>[],
+                  'my_sos': <Map<String, dynamic>>[],
+                  'incoming_sos': <Map<String, dynamic>>[],
+                };
+              }
+
+              final startSeconds = activeHike.first['start_time'] as int? ?? 0;
+              final startMs = startSeconds * 1000;
+              final endMs = DateTime.now().millisecondsSinceEpoch;
+
               final allMessages = await db.query(
                 'messages',
-                where: 'sender_id = ? OR receiver_id = ?',
-                whereArgs: [currentUserId, currentUserId],
+                where: '(sender_id = ? OR receiver_id = ?) AND timestamp >= ? AND timestamp <= ?',
+                whereArgs: [currentUserId, currentUserId, startMs, endMs],
                 orderBy: 'timestamp DESC',
               );
 
               // 四大类容器
               final Map<String, Map<String, dynamic>> myQuestionsMap = {};
               final Map<String, Map<String, dynamic>> incomingQuestionsMap = {};
-              final Map<String, Map<String, dynamic>> mySosMap = {};
               final Map<String, Map<String, dynamic>> incomingSosMap = {};
 
               for (var msg in allMessages) {
@@ -617,26 +661,23 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                 }
 
                 // --- 求救类（不限定 hike）---
-                if (type == 'sos') {
-                  final isMySos = senderId == currentUserId;
-                  final partnerId = isMySos ? receiverId : senderId;
-                  final directionKey = isMySos ? 'outgoing' : 'incoming';
-
-                  // 优先使用 remote_id 去重，其次用 partner + timestamp 兜底
+                // “我的求救”不再从 messages 里的广播/单条消息推导，而是从本地 sos_events 表读取（折叠成一次事件）。
+                // 这里仅保留“向我求救”的聚合。
+                if (type == 'sos' && receiverId == currentUserId) {
+                  final partnerId = senderId;
                   final remoteId = msg['remote_id'];
                   final baseKey = remoteId != null
                       ? remoteId.toString()
                       : '${partnerId}_$timestamp';
-                  final key = 'sos_${directionKey}_$baseKey';
+                  final key = 'sos_incoming_$baseKey';
 
-                  final targetMap = isMySos ? mySosMap : incomingSosMap;
-                  if (targetMap.containsKey(key)) {
+                  if (incomingSosMap.containsKey(key)) {
                     final existingTime =
-                        (targetMap[key]!['msg'] as Map)['timestamp'] as int;
+                        (incomingSosMap[key]!['msg'] as Map)['timestamp'] as int;
                     if (timestamp <= existingTime) continue;
                   }
 
-                  targetMap[key] = {
+                  incomingSosMap[key] = {
                     'msg': msg,
                     'partner_id': partnerId,
                   };
@@ -645,7 +686,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
               }
 
               debugPrint(
-                  'Temporary sessions grouped (v2): myQuestions=${myQuestionsMap.length}, incomingQuestions=${incomingQuestionsMap.length}, mySos=${mySosMap.length}, incomingSos=${incomingSosMap.length}');
+                  'Temporary sessions grouped (v2): myQuestions=${myQuestionsMap.length}, incomingQuestions=${incomingQuestionsMap.length}, incomingSos=${incomingSosMap.length}');
 
               // --- 补充联系人信息 & 展示文案 ---
               final List<Map<String, dynamic>> myQuestionList =
@@ -691,51 +732,13 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
               incomingQuestionList.sort((a, b) =>
                   (b['timestamp'] as int).compareTo(a['timestamp'] as int));
 
-              final List<Map<String, dynamic>> mySosList = [];
-              for (var item in mySosMap.values) {
-                final msg = item['msg'] as Map<String, dynamic>;
-                final partnerId = item['partner_id'] as int;
-
-                String name =
-                    partnerId == 0 ? '所有人 (SOS广播)' : '用户 $partnerId';
-                String avatar = '';
-
-                if (partnerId != 0) {
-                  var contact = await DatabaseHelper().getContact(partnerId);
-                  if (contact != null) {
-                    name = contact['nickname'] ?? name;
-                    avatar = contact['avatar'] ?? avatar;
-                  } else {
-                    try {
-                      final response =
-                          await ApiService().get('/users/$partnerId');
-                      if (response.statusCode == 200 &&
-                          response.data != null) {
-                        final user = response.data;
-                        name = user['nickname'] ?? name;
-                        avatar = user['avatar'] ?? avatar;
-                      }
-                    } catch (e) {
-                      debugPrint('Error fetching user info for $partnerId: $e');
-                    }
-                  }
-                }
-
-                final bool isBroadcast = partnerId == 0;
-                final String content = isBroadcast
-                    ? '[SOS求救] 我已发出求救广播'
-                    : '[SOS求救] 我向他发出了求救';
-
-                mySosList.add({
-                  'partner_id': partnerId,
-                  'partner_name': name,
-                  'partner_avatar': avatar,
-                  'content': content,
-                  'timestamp': msg['timestamp'],
-                });
-              }
-              mySosList.sort((a, b) =>
-                  (b['timestamp'] as int).compareTo(a['timestamp'] as int));
+              // 读取“我的求救”事件（一次SOS折叠成一条）
+              final mySosEvents = await db.query(
+                'sos_events',
+                where: 'user_id = ? AND created_at >= ? AND created_at <= ?',
+                whereArgs: [currentUserId, startMs, endMs],
+                orderBy: 'created_at DESC',
+              );
 
               final List<Map<String, dynamic>> incomingSosList = [];
               for (var item in incomingSosMap.values) {
@@ -781,7 +784,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
               return {
                 'my_questions': myQuestionList,
                 'incoming_questions': incomingQuestionList,
-                'my_sos': mySosList,
+                'my_sos': mySosEvents,
                 'incoming_sos': incomingSosList,
               };
             }),
@@ -939,64 +942,68 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                         ),
                       ),
                     ),
-                    ...mySos.map((item) {
-                      final partnerId = item['partner_id'] as int;
-                      final partnerName = item['partner_name'] as String;
-                      final partnerAvatar = item['partner_avatar'] as String;
+                    ...mySos.map((event) {
+                      String dangerLabel = '未知危险';
+                      int safetyStatus = 0;
+                      List urgentLabels = [];
+                      int createdAt = event['created_at'] as int? ?? 0;
+                      int recipientCount = 0;
+
+                      try {
+                        final msg = jsonDecode(event['message_json'] ?? '{}');
+                        dangerLabel = msg['danger_label'] ?? dangerLabel;
+                        safetyStatus = msg['safety_status'] ?? safetyStatus;
+                        urgentLabels = (msg['urgent_labels'] as List?) ?? [];
+                      } catch (_) {}
+
+                      try {
+                        final recipients = jsonDecode(event['recipients_json'] ?? '[]') as List;
+                        recipientCount = recipients.length;
+                      } catch (_) {}
+
+                      final statusText = safetyStatus == 2
+                          ? '已脱险'
+                          : (safetyStatus == 1 ? '暂时安全' : '仍危险');
+                      final statusColor = safetyStatus == 2
+                          ? Colors.green
+                          : (safetyStatus == 1 ? Colors.orange : Colors.red);
 
                       return Card(
-                        margin: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 8),
+                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         color: Colors.red.shade50,
                         shape: RoundedRectangleBorder(
-                          side: BorderSide(
-                            color: Colors.red.shade200,
-                            width: 1,
-                          ),
+                          side: BorderSide(color: Colors.red.shade200, width: 1),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: ListTile(
-                          leading: (partnerAvatar.isNotEmpty)
-                              ? CircleAvatar(
-                                  backgroundImage: CachedNetworkImageProvider(
-                                    partnerAvatar.startsWith('http')
-                                        ? partnerAvatar
-                                        : 'http://8.136.205.255:8000$partnerAvatar',
-                                  ),
-                                )
-                              : CircleAvatar(
-                                  backgroundColor: Colors.red.shade100,
-                                  child: const Icon(
-                                    Icons.warning_amber_rounded,
-                                    color: Colors.red,
-                                  ),
-                                ),
+                          leading: CircleAvatar(
+                            backgroundColor: Colors.red.shade100,
+                            child: const Icon(Icons.warning_amber_rounded, color: Colors.red),
+                          ),
                           title: Text(
-                            item['content'],
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.red,
-                              fontWeight: FontWeight.bold,
+                            '已发送给 $recipientCount 位用户',
+                            style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: [
+                                _miniTag(Icons.report, dangerLabel, Colors.red.shade700),
+                                _miniTag(Icons.shield, statusText, statusColor),
+                                if (urgentLabels.isNotEmpty)
+                                  _miniTag(Icons.inventory_2, urgentLabels.join('、'), Colors.deepOrange),
+                                _miniTag(Icons.access_time, _formatTime(createdAt), Colors.grey),
+                              ],
                             ),
                           ),
-                          subtitle: Text(
-                            partnerId == 0
-                                ? '广播给所有人'
-                                : '与 $partnerName • ${_formatTime(item['timestamp'])}',
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                          trailing: const Icon(Icons.chat),
+                          trailing: const Icon(Icons.chevron_right),
                           onTap: () {
-                            if (partnerId == 0) return;
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => ChatPage(
-                                  title: partnerName,
-                                  avatar: partnerAvatar,
-                                  partnerId: partnerId,
-                                ),
+                                builder: (_) => SOSEventDetailPage(event: Map<String, dynamic>.from(event)),
                               ),
                             );
                           },

@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:solitary/providers/auth_provider.dart';
 import 'dart:convert';
 import 'package:intl/intl.dart';
+import 'dart:typed_data';
 
 class SOSDetailPage extends StatefulWidget {
   final double? latitude;
@@ -181,10 +182,22 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
         'time': timeStr,
       };
 
+      // 将现场照片转 base64，并提交给后端存储到数据库（用于“求救详情页”展示现场照片）
+      final List<String> photoBase64List = [];
+      for (final p in _photos) {
+        try {
+          final Uint8List bytes = await p.readAsBytes();
+          photoBase64List.add(base64Encode(bytes));
+        } catch (_) {
+          // ignore single photo error
+        }
+      }
+
       final response = await ApiService().post('/messages/sos', data: {
         'latitude': lat,
         'longitude': lng,
         'message': jsonEncode(messageData), // Send structured data as JSON string
+        'photos': photoBase64List,
       });
 
       if (response.statusCode == 200) {
@@ -211,26 +224,29 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
           }
         });
 
-        // Save locally for immediate feedback in Message Center
+        if (!mounted) return;
+
+        // 保存“一次 SOS 事件”到本地，用于“我的求救”折叠展示与详情页
         try {
-          await DatabaseHelper().saveMessage({
-            'sender_id': user.id,
-            'receiver_id': 0, // Broadcast
-            'content': jsonEncode(messageData),
-            'type': 'sos',
-            'timestamp': now.millisecondsSinceEpoch,
-            'is_read': 1,
-            'sync_status': 0,
-            'remote_id': data['id'], // SOSAlert ID
+          await DatabaseHelper().saveSOSEvent({
+            'remote_id': data['id'],
+            'user_id': user.id,
+            'message_json': jsonEncode(messageData),
+            'recipients_json': jsonEncode(recipients),
+            // photos 使用后端返回（确保确实入库到服务器DB），并兜底本地生成的 base64 列表
+            'photos_json': jsonEncode((data['photos'] as List?) ?? photoBase64List),
+            'created_at': now.millisecondsSinceEpoch,
           });
         } catch (dbError) {
-          debugPrint('Failed to save SOS message locally: $dbError');
+          debugPrint('Failed to save SOS event locally: $dbError');
         }
 
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('求救信息已发送')),
-        );
+        final summary = count > 0
+            ? _recipientSummaryText
+            : '暂时没有找到符合条件的接收用户';
+
+        // 返回到开始徒步页面，由入口处统一弹出提示
+        Navigator.pop(context, {'summary': summary, 'recipientCount': count});
       } else {
         throw Exception('Failed to send SOS');
       }

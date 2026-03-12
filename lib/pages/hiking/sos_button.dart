@@ -43,7 +43,14 @@ class _SOSButtonState extends State<SOSButton> with SingleTickerProviderStateMix
     Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => const SOSDetailPage()),
-    );
+    ).then((result) {
+      if (!mounted) return;
+      if (result is Map && result['summary'] is String) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result['summary'] as String)),
+        );
+      }
+    });
   }
 
   @override

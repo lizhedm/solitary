@@ -22,7 +22,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 8,
+      version: 9,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -97,6 +97,7 @@ class DatabaseHelper {
     ''');
     
     await _createMessageTables(db);
+    await _createSOSEventTables(db);
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -154,6 +155,9 @@ class DatabaseHelper {
       try { await db.execute('ALTER TABLE messages ADD COLUMN sender_hike_id INTEGER'); } catch (_) {}
       try { await db.execute('ALTER TABLE messages ADD COLUMN receiver_hike_id INTEGER'); } catch (_) {}
     }
+    if (oldVersion < 9) {
+      await _createSOSEventTables(db);
+    }
   }
   
   Future<void> _createMessageTables(Database db) async {
@@ -184,6 +188,40 @@ class DatabaseHelper {
         updated_at INTEGER
       )
     ''');
+  }
+
+  Future<void> _createSOSEventTables(Database db) async {
+    // 一次 SOS 求救事件（用于“我的求救”折叠展示）
+    await db.execute('''
+      CREATE TABLE sos_events(
+        local_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        remote_id INTEGER UNIQUE,
+        user_id INTEGER,
+        message_json TEXT,
+        recipients_json TEXT,
+        photos_json TEXT,
+        created_at INTEGER
+      )
+    ''');
+  }
+
+  Future<int> saveSOSEvent(Map<String, dynamic> event) async {
+    final db = await database;
+    return await db.insert(
+      'sos_events',
+      event,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getSOSEvents(int userId) async {
+    final db = await database;
+    return await db.query(
+      'sos_events',
+      where: 'user_id = ?',
+      whereArgs: [userId],
+      orderBy: 'created_at DESC',
+    );
   }
 
   // --- User Helper Methods ---

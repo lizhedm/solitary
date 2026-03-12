@@ -60,6 +60,7 @@ class _HikingMapPageState extends State<HikingMapPage>
   // 计时器相关变量
   Timer? _timer;
   DateTime? _startTime;
+  int? _activeLocalHikeRecordId;
   Duration _accumulatedDuration = Duration.zero;
   Duration _currentDuration = Duration.zero;
 
@@ -1886,6 +1887,38 @@ class _HikingMapPageState extends State<HikingMapPage>
                 'lng': _position!.longitude,
              });
           }
+
+          // 在本地创建“进行中的徒步记录”（end_time 为空），用于临时会话按本次徒步时间段过滤
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            final authProvider = Provider.of<AuthProvider>(context, listen: false);
+            final userId = authProvider.user?.id ?? 0;
+            if (userId == 0) return;
+            try {
+              final now = DateTime.now();
+              final recordMap = <String, dynamic>{
+                'user_id': userId,
+                'start_time': now.millisecondsSinceEpoch ~/ 1000,
+                'end_time': null,
+                'duration': 0,
+                'distance': 0.0,
+                'calories': 0,
+                'elevation_gain': 0,
+                'start_location': 'Unknown',
+                'end_location': 'Unknown',
+                'map_snapshot_url': null,
+                'coordinates_json': null,
+                'message_count': 0,
+                'sync_status': 1,
+              };
+              final localId = await DatabaseHelper().saveHikingRecord(recordMap);
+              if (!mounted) return;
+              setState(() {
+                _activeLocalHikeRecordId = localId;
+              });
+            } catch (e) {
+              debugPrint('Create active hiking record failed: $e');
+            }
+          });
         },
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF2E7D32),
@@ -2031,8 +2064,8 @@ class _HikingMapPageState extends State<HikingMapPage>
     final startTs = (start.millisecondsSinceEpoch / 1000).round();
     final endTs = (now.millisecondsSinceEpoch / 1000).round();
     
-    // 6. 保存记录
-    int? localRecordId;
+    // 6. 保存记录（优先复用开始徒步时创建的“进行中记录”）
+    int? localRecordId = _activeLocalHikeRecordId;
     int associatedCount = 0;
     
     try {
@@ -2057,9 +2090,13 @@ class _HikingMapPageState extends State<HikingMapPage>
       );
       
       final localRecordMap = record.toJson();
-      localRecordMap.remove('id'); 
-      localRecordMap['sync_status'] = 1; 
+      localRecordMap.remove('id');
+      localRecordMap['sync_status'] = 1;
+      if (localRecordId != null) {
+        localRecordMap['local_id'] = localRecordId;
+      }
       localRecordId = await DatabaseHelper().saveHikingRecord(localRecordMap);
+      _activeLocalHikeRecordId = localRecordId;
       
       // 6.2 关联本地消息并更新数量
       associatedCount = await DatabaseHelper().associateMessagesWithHike(localRecordId, userId, startTs, endTs);
@@ -2069,6 +2106,9 @@ class _HikingMapPageState extends State<HikingMapPage>
       localRecordMap['local_id'] = localRecordId;
       localRecordMap['message_count'] = associatedCount;
       await DatabaseHelper().saveHikingRecord(localRecordMap);
+
+      // 结束后清空“进行中的徒步记录ID”，避免临时会话继续展示本次数据
+      _activeLocalHikeRecordId = null;
       
       // 6.3 上传到服务器
       final syncRecord = record.copyWith(messageCount: associatedCount);
