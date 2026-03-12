@@ -770,12 +770,25 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                   }
                 }
 
+                String dangerLabel = '未知危险';
+                int safetyStatus = 0;
+                List urgentLabels = [];
+                try {
+                  final data = jsonDecode(msg['content'] as String? ?? '{}');
+                  dangerLabel = data['danger_label'] ?? dangerLabel;
+                  safetyStatus = data['safety_status'] ?? safetyStatus;
+                  urgentLabels = (data['urgent_labels'] as List?) ?? [];
+                } catch (_) {}
+
                 incomingSosList.add({
                   'partner_id': partnerId,
                   'partner_name': name,
                   'partner_avatar': avatar,
                   'content': '[SOS求救] 收到他的求救信号',
                   'timestamp': msg['timestamp'],
+                  'danger_label': dangerLabel,
+                  'safety_status': safetyStatus,
+                  'urgent_labels': urgentLabels,
                 });
               }
               incomingSosList.sort((a, b) =>
@@ -1028,6 +1041,15 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                       final partnerId = item['partner_id'] as int;
                       final partnerName = item['partner_name'] as String;
                       final partnerAvatar = item['partner_avatar'] as String;
+                      final dangerLabel = item['danger_label'] as String? ?? '未知危险';
+                      final safetyStatus = item['safety_status'] as int? ?? 0;
+                      final urgentLabels = (item['urgent_labels'] as List?) ?? [];
+                      final statusText = safetyStatus == 2
+                          ? '已脱险'
+                          : (safetyStatus == 1 ? '暂时安全' : '仍危险');
+                      final statusColor = safetyStatus == 2
+                          ? Colors.green
+                          : (safetyStatus == 1 ? Colors.orange : Colors.red);
 
                       return Card(
                         margin: const EdgeInsets.symmetric(
@@ -1065,9 +1087,28 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          subtitle: Text(
-                            '来自 $partnerName • ${_formatTime(item['timestamp'])}',
-                            style: const TextStyle(fontSize: 12),
+                          subtitle: Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 6,
+                                  children: [
+                                    _miniTag(Icons.report, dangerLabel, Colors.red.shade700),
+                                    _miniTag(Icons.shield, statusText, statusColor),
+                                    if (urgentLabels.isNotEmpty)
+                                      _miniTag(Icons.inventory_2, urgentLabels.join('、'), Colors.deepOrange),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '来自 $partnerName • ${_formatTime(item['timestamp'])}',
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ],
+                            ),
                           ),
                           trailing: const Icon(Icons.chat),
                           onTap: () {

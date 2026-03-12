@@ -3,6 +3,7 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:solitary/services/api_service.dart';
+import 'package:dio/dio.dart';
 import 'package:solitary/services/database_helper.dart';
 import 'package:provider/provider.dart';
 import 'package:solitary/providers/auth_provider.dart';
@@ -182,14 +183,27 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
         'time': timeStr,
       };
 
-      // 将现场照片转 base64，并提交给后端存储到数据库（用于“求救详情页”展示现场照片）
-      final List<String> photoBase64List = [];
+      // 先将现场照片上传到服务器，拿到 URL 列表，再随 SOS 一起写入后端数据库
+      final List<String> photoUrls = [];
       for (final p in _photos) {
         try {
-          final Uint8List bytes = await p.readAsBytes();
-          photoBase64List.add(base64Encode(bytes));
-        } catch (_) {
-          // ignore single photo error
+          final bytes = await p.readAsBytes();
+          final formData = FormData.fromMap({
+            'file': MultipartFile.fromBytes(
+              bytes,
+              filename: p.name,
+            ),
+          });
+          final resp = await ApiService().post('/upload/sos-photo', data: formData);
+          if (resp.statusCode == 200 && resp.data != null && resp.data['url'] != null) {
+            String url = resp.data['url'];
+            if (!url.startsWith('http')) {
+              url = 'http://8.136.205.255:8000$url';
+            }
+            photoUrls.add(url);
+          }
+        } catch (e) {
+          debugPrint('Upload sos photo failed: $e');
         }
       }
 
@@ -197,7 +211,7 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
         'latitude': lat,
         'longitude': lng,
         'message': jsonEncode(messageData), // Send structured data as JSON string
-        'photos': photoBase64List,
+        'photos': photoUrls,
       });
 
       if (response.statusCode == 200) {
@@ -233,8 +247,8 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
             'user_id': user.id,
             'message_json': jsonEncode(messageData),
             'recipients_json': jsonEncode(recipients),
-            // photos 使用后端返回（确保确实入库到服务器DB），并兜底本地生成的 base64 列表
-            'photos_json': jsonEncode((data['photos'] as List?) ?? photoBase64List),
+            // photos 使用后端返回（URL 列表），并兜底本地上传结果
+            'photos_json': jsonEncode((data['photos'] as List?) ?? photoUrls),
             'created_at': now.millisecondsSinceEpoch,
           });
         } catch (dbError) {

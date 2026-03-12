@@ -245,22 +245,36 @@ def update_privacy_settings(
 
 @router.post("/upload/snapshot")
 async def upload_snapshot(file: UploadFile = File(...)):
-    # ... existing code ...
     try:
-        # Create directory if not exists
         upload_dir = "uploads/snapshots"
         os.makedirs(upload_dir, exist_ok=True)
-        
-        # Generate filename
         timestamp = int(datetime.now().timestamp())
         filename = f"snapshot_{timestamp}_{file.filename}"
         file_path = os.path.join(upload_dir, filename)
-        
-        # Save file
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-            
         return {"url": f"/uploads/snapshots/{filename}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/upload/sos-photo")
+async def upload_sos_photo(file: UploadFile = File(...)):
+    """
+    上传 SOS 现场照片，返回可公开访问的 URL。
+    """
+    try:
+        upload_dir = "uploads/sos_photos"
+        os.makedirs(upload_dir, exist_ok=True)
+
+        timestamp = int(datetime.now().timestamp())
+        filename = f"sos_{timestamp}_{file.filename}"
+        file_path = os.path.join(upload_dir, filename)
+
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        return {"url": f"/uploads/sos_photos/{filename}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
