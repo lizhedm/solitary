@@ -567,11 +567,31 @@ def create_sos(
     recipient_list = [
         SOSRecipient(id=u.id, nickname=u.nickname) for u in targets.values()
     ]
-    
-    out = SOSOut.from_orm(db_sos)
-    out.user_name = current_user.nickname
-    out.recipients = recipient_list
-    out.photos = sos.photos or []
+
+    # 将 DB 中的 photos(JSON字符串) 转为 List[str]
+    photos_list: list[str] = []
+    if db_sos.photos and isinstance(db_sos.photos, str):
+        try:
+            decoded = json.loads(db_sos.photos)
+            if isinstance(decoded, list):
+                photos_list = [str(x) for x in decoded]
+        except Exception:
+            photos_list = []
+
+    # 手动构造 SOSOut，避免 from_orm 把 photos 字符串直接塞进 List[str]
+    out = SOSOut(
+        id=db_sos.id,
+        user_id=db_sos.user_id,
+        user_name=current_user.nickname,
+        latitude=db_sos.latitude,
+        longitude=db_sos.longitude,
+        message=db_sos.message,
+        status=db_sos.status,
+        created_at=db_sos.created_at,
+        resolved_at=db_sos.resolved_at,
+        recipients=recipient_list,
+        photos=photos_list,
+    )
     return out
 
 @router.get("/messages/sos", response_model=List[SOSOut])
@@ -590,11 +610,30 @@ def get_sos_in_bounds(
         SOSAlert.status == 'ACTIVE'
     )
     alerts = query.all()
-    results = []
+    results: list[SOSOut] = []
     for a in alerts:
-        out = SOSOut.from_orm(a)
-        if a.user:
-            out.user_name = a.user.nickname
+        photos_list: list[str] = []
+        if a.photos and isinstance(a.photos, str):
+            try:
+                decoded = json.loads(a.photos)
+                if isinstance(decoded, list):
+                    photos_list = [str(x) for x in decoded]
+            except Exception:
+                photos_list = []
+
+        out = SOSOut(
+            id=a.id,
+            user_id=a.user_id,
+            user_name=a.user.nickname if a.user else None,
+            latitude=a.latitude,
+            longitude=a.longitude,
+            message=a.message,
+            status=a.status,
+            created_at=a.created_at,
+            resolved_at=a.resolved_at,
+            recipients=None,
+            photos=photos_list,
+        )
         results.append(out)
     return results
 
