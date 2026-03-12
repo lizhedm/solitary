@@ -429,11 +429,21 @@ def create_sos(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # 1. Create SOS Alert Record
+    """
+    创建 SOS 记录并向周围用户广播。
+
+    注意：作为“中心点”的坐标优先使用 users 表中 current_user 的 current_lat/current_lng，
+    这样即使前端没有传经纬度（或传了 0,0），仍然可以用服务器端已保存的位置来做距离判断；
+    只有在 current_lat/current_lng 为空的情况下，才退回到使用 body 里的 sos.latitude/longitude。
+    """
+    center_lat = current_user.current_lat if current_user.current_lat is not None else sos.latitude
+    center_lng = current_user.current_lng if current_user.current_lng is not None else sos.longitude
+
+    # 1. Create SOS Alert Record（也使用 center_lat/center_lng 作为本次 SOS 的坐标）
     db_sos = SOSAlert(
         user_id=current_user.id,
-        latitude=sos.latitude,
-        longitude=sos.longitude,
+        latitude=center_lat,
+        longitude=center_lng,
         message=sos.message,
         status='ACTIVE',
         created_at=int(time.time() * 1000)
@@ -462,7 +472,7 @@ def create_sos(
         之前的基于经纬度 bounding box 的粗滤逻辑保留在下面（已注释），需要时可以恢复。
         """
         # 打印当前 SOS 位置，方便确认是不是 0,0 或者异常值
-        print(f"[SOS] create_sos: center=({sos.latitude}, {sos.longitude}), radius={radius_km}km, exclude_ids={exclude_ids}")
+        print(f"[SOS] create_sos: center=({center_lat}, {center_lng}), radius={radius_km}km, exclude_ids={exclude_ids}")
 
         # 1. 先按开关/坐标做第一步过滤
         users = db.query(User).filter(
@@ -475,7 +485,8 @@ def create_sos(
 
         candidates = []
         for u in users:
-            dist = calculate_distance(sos.latitude, sos.longitude, u.current_lat, u.current_lng)
+            # 与中心点（当前用户 last known 位置）计算实际距离
+            dist = calculate_distance(center_lat, center_lng, u.current_lat, u.current_lng)
             within = dist <= radius_km
             print(
                 f"[SOS] candidate user_id={u.id}, nickname={u.nickname}, "
