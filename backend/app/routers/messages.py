@@ -115,18 +115,23 @@ def ask_question(
     
     targets = {} # user_id -> User object
     
-    # 1. Find Active Users (10km)
+    # 1. Find Active Users (10km，全局上限)，同时尊重对方的「接收提问」与可见范围设置
     active_users = db.query(User).filter(
         User.id != current_user.id,
         User.is_hiking == True,
         User.current_lat != None,
-        User.current_lng != None
+        User.current_lng != None,
+        User.receive_questions == True,
+        User.visible_on_map == True,
     ).all()
     
     active_candidates = []
     for user in active_users:
         dist = calculate_distance(req.latitude, req.longitude, user.current_lat, user.current_lng)
-        if dist <= 10.0:
+        # 每个用户有自己的 visible_range（公里），再与全局 10km 上限取较小值
+        max_range_km = float(user.visible_range or 10)
+        effective_range = min(10.0, max_range_km)
+        if dist <= effective_range:
             active_candidates.append((dist, user))
             
     # Sort by distance and take top 3
@@ -186,8 +191,19 @@ def ask_question(
         top_historical = historical_candidates[:5]
         
         for cand in top_historical:
-            user = db.query(User).filter(User.id == cand['user_id']).first()
-            if user:
+            # 历史用户同样需要尊重「接收提问」与可见范围
+            user = db.query(User).filter(
+                User.id == cand['user_id'],
+                User.receive_questions == True,
+                User.visible_on_map == True,
+                User.current_lat != None,
+                User.current_lng != None,
+            ).first()
+            if not user:
+                continue
+            max_range_km = float(user.visible_range or 10)
+            effective_range = min(10.0, max_range_km)
+            if cand['dist'] <= effective_range:
                 targets[user.id] = user
 
     # 3. Create Messages
@@ -438,6 +454,7 @@ def create_sos(
         users = db.query(User).filter(
             User.id != current_user.id,
             User.id.notin_(exclude_ids),
+            User.receive_sos == True,
             User.current_lat >= sos.latitude - delta,
             User.current_lat <= sos.latitude + delta,
             User.current_lng >= sos.longitude - delta,

@@ -84,7 +84,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
         controller: _tabController,
         children: [
           _buildFriendsList(),
-          _buildTemporaryList(),
+          _buildTemporaryListV2(),
           _buildMyFeedbacksList(),
         ],
       ),
@@ -536,6 +536,557 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
     },
   );
 }
+
+  /// 新版本的临时会话列表：明确拆分为「我的提问 / 向我提问 / 我的求救 / 向我求救」四大类
+  Widget _buildTemporaryListV2() {
+    return Consumer<MessageProvider>(
+      builder: (context, provider, child) {
+        final authProvider = Provider.of<AuthProvider>(context, listen: false);
+        final currentUserId = authProvider.user?.id;
+
+        if (currentUserId == null) {
+          return const Center(child: Text('请先登录'));
+        }
+
+        return RefreshIndicator(
+          onRefresh: () async {
+            provider.startPolling(currentUserId);
+            await provider.fetchNewMessages(currentUserId);
+            setState(() {});
+          },
+          child: FutureBuilder<Map<String, List<Map<String, dynamic>>>>(
+            future: DatabaseHelper().database.then((db) async {
+              debugPrint('Fetching all messages for temporary session list (v2)...');
+
+              final allMessages = await db.query(
+                'messages',
+                where: 'sender_id = ? OR receiver_id = ?',
+                whereArgs: [currentUserId, currentUserId],
+                orderBy: 'timestamp DESC',
+              );
+
+              // 四大类容器
+              final Map<String, Map<String, dynamic>> myQuestionsMap = {};
+              final Map<String, Map<String, dynamic>> incomingQuestionsMap = {};
+              final Map<String, Map<String, dynamic>> mySosMap = {};
+              final Map<String, Map<String, dynamic>> incomingSosMap = {};
+
+              for (var msg in allMessages) {
+                final type = msg['type'] as String? ?? 'text';
+                final senderId = msg['sender_id'] as int;
+                final receiverId = msg['receiver_id'] as int;
+                final hikeId = msg['hike_id'] as int?;
+                final timestamp = msg['timestamp'] as int;
+
+                // --- 提问类 ---
+                if (type == 'question' && (hikeId == null || hikeId == 0)) {
+                  final content = msg['content'] as String;
+
+                  // 1. 我的提问：我作为发送方
+                  if (senderId == currentUserId) {
+                    if (!myQuestionsMap.containsKey(content)) {
+                      myQuestionsMap[content] = {
+                        'content': content,
+                        'timestamp': timestamp,
+                        'recipients': <int>[],
+                      };
+                    }
+                    final recipients =
+                        myQuestionsMap[content]!['recipients'] as List<int>;
+                    if (!recipients.contains(receiverId)) {
+                      recipients.add(receiverId);
+                    }
+                  }
+                  // 2. 向我提问：我作为接收方
+                  else if (receiverId == currentUserId) {
+                    final partnerId = senderId;
+                    final key = 'question_incoming_${partnerId}_$content';
+
+                    if (incomingQuestionsMap.containsKey(key)) {
+                      final existingTime =
+                          (incomingQuestionsMap[key]!['msg'] as Map)['timestamp']
+                              as int;
+                      if (timestamp <= existingTime) continue;
+                    }
+                    incomingQuestionsMap[key] = {
+                      'msg': msg,
+                      'partner_id': partnerId,
+                    };
+                  }
+                  continue;
+                }
+
+                // --- 求救类（不限定 hike）---
+                if (type == 'sos') {
+                  final isMySos = senderId == currentUserId;
+                  final partnerId = isMySos ? receiverId : senderId;
+                  final directionKey = isMySos ? 'outgoing' : 'incoming';
+
+                  // 优先使用 remote_id 去重，其次用 partner + timestamp 兜底
+                  final remoteId = msg['remote_id'];
+                  final baseKey = remoteId != null
+                      ? remoteId.toString()
+                      : '${partnerId}_$timestamp';
+                  final key = 'sos_${directionKey}_$baseKey';
+
+                  final targetMap = isMySos ? mySosMap : incomingSosMap;
+                  if (targetMap.containsKey(key)) {
+                    final existingTime =
+                        (targetMap[key]!['msg'] as Map)['timestamp'] as int;
+                    if (timestamp <= existingTime) continue;
+                  }
+
+                  targetMap[key] = {
+                    'msg': msg,
+                    'partner_id': partnerId,
+                  };
+                  continue;
+                }
+              }
+
+              debugPrint(
+                  'Temporary sessions grouped (v2): myQuestions=${myQuestionsMap.length}, incomingQuestions=${incomingQuestionsMap.length}, mySos=${mySosMap.length}, incomingSos=${incomingSosMap.length}');
+
+              // --- 补充联系人信息 & 展示文案 ---
+              final List<Map<String, dynamic>> myQuestionList =
+                  myQuestionsMap.values.toList();
+              myQuestionList.sort((a, b) =>
+                  (b['timestamp'] as int).compareTo(a['timestamp'] as int));
+
+              final List<Map<String, dynamic>> incomingQuestionList = [];
+              for (var item in incomingQuestionsMap.values) {
+                final msg = item['msg'] as Map<String, dynamic>;
+                final partnerId = item['partner_id'] as int;
+
+                String name = '用户 $partnerId';
+                String avatar = '';
+
+                var contact = await DatabaseHelper().getContact(partnerId);
+                if (contact != null) {
+                  name = contact['nickname'] ?? name;
+                  avatar = contact['avatar'] ?? avatar;
+                } else {
+                  try {
+                    final response =
+                        await ApiService().get('/users/$partnerId');
+                    if (response.statusCode == 200 &&
+                        response.data != null) {
+                      final user = response.data;
+                      name = user['nickname'] ?? name;
+                      avatar = user['avatar'] ?? avatar;
+                    }
+                  } catch (e) {
+                    debugPrint('Error fetching user info for $partnerId: $e');
+                  }
+                }
+
+                incomingQuestionList.add({
+                  'partner_id': partnerId,
+                  'partner_name': name,
+                  'partner_avatar': avatar,
+                  'content': '收到提问: ${msg['content']}',
+                  'timestamp': msg['timestamp'],
+                });
+              }
+              incomingQuestionList.sort((a, b) =>
+                  (b['timestamp'] as int).compareTo(a['timestamp'] as int));
+
+              final List<Map<String, dynamic>> mySosList = [];
+              for (var item in mySosMap.values) {
+                final msg = item['msg'] as Map<String, dynamic>;
+                final partnerId = item['partner_id'] as int;
+
+                String name =
+                    partnerId == 0 ? '所有人 (SOS广播)' : '用户 $partnerId';
+                String avatar = '';
+
+                if (partnerId != 0) {
+                  var contact = await DatabaseHelper().getContact(partnerId);
+                  if (contact != null) {
+                    name = contact['nickname'] ?? name;
+                    avatar = contact['avatar'] ?? avatar;
+                  } else {
+                    try {
+                      final response =
+                          await ApiService().get('/users/$partnerId');
+                      if (response.statusCode == 200 &&
+                          response.data != null) {
+                        final user = response.data;
+                        name = user['nickname'] ?? name;
+                        avatar = user['avatar'] ?? avatar;
+                      }
+                    } catch (e) {
+                      debugPrint('Error fetching user info for $partnerId: $e');
+                    }
+                  }
+                }
+
+                final bool isBroadcast = partnerId == 0;
+                final String content = isBroadcast
+                    ? '[SOS求救] 我已发出求救广播'
+                    : '[SOS求救] 我向他发出了求救';
+
+                mySosList.add({
+                  'partner_id': partnerId,
+                  'partner_name': name,
+                  'partner_avatar': avatar,
+                  'content': content,
+                  'timestamp': msg['timestamp'],
+                });
+              }
+              mySosList.sort((a, b) =>
+                  (b['timestamp'] as int).compareTo(a['timestamp'] as int));
+
+              final List<Map<String, dynamic>> incomingSosList = [];
+              for (var item in incomingSosMap.values) {
+                final msg = item['msg'] as Map<String, dynamic>;
+                final partnerId = item['partner_id'] as int;
+
+                String name =
+                    partnerId == 0 ? '所有人 (SOS广播)' : '用户 $partnerId';
+                String avatar = '';
+
+                if (partnerId != 0) {
+                  var contact = await DatabaseHelper().getContact(partnerId);
+                  if (contact != null) {
+                    name = contact['nickname'] ?? name;
+                    avatar = contact['avatar'] ?? avatar;
+                  } else {
+                    try {
+                      final response =
+                          await ApiService().get('/users/$partnerId');
+                      if (response.statusCode == 200 &&
+                          response.data != null) {
+                        final user = response.data;
+                        name = user['nickname'] ?? name;
+                        avatar = user['avatar'] ?? avatar;
+                      }
+                    } catch (e) {
+                      debugPrint('Error fetching user info for $partnerId: $e');
+                    }
+                  }
+                }
+
+                incomingSosList.add({
+                  'partner_id': partnerId,
+                  'partner_name': name,
+                  'partner_avatar': avatar,
+                  'content': '[SOS求救] 收到他的求救信号',
+                  'timestamp': msg['timestamp'],
+                });
+              }
+              incomingSosList.sort((a, b) =>
+                  (b['timestamp'] as int).compareTo(a['timestamp'] as int));
+
+              return {
+                'my_questions': myQuestionList,
+                'incoming_questions': incomingQuestionList,
+                'my_sos': mySosList,
+                'incoming_sos': incomingSosList,
+              };
+            }),
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return Center(child: Text('加载失败: ${snapshot.error}'));
+              }
+              if (!snapshot.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              final data = snapshot.data!;
+              final myQuestions = data['my_questions'] ?? [];
+              final incomingQuestions = data['incoming_questions'] ?? [];
+              final mySos = data['my_sos'] ?? [];
+              final incomingSos = data['incoming_sos'] ?? [];
+
+              if (myQuestions.isEmpty &&
+                  incomingQuestions.isEmpty &&
+                  mySos.isEmpty &&
+                  incomingSos.isEmpty) {
+                return _buildEmptyState(
+                  '暂无临时会话',
+                  '这里会显示你的提问、收到的提问以及求救信息。\n在地图页面发起求助或求救后，会话会出现在这里。',
+                  Icons.people_outline,
+                );
+              }
+
+              return ListView(
+                children: [
+                  if (myQuestions.isNotEmpty) ...[
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+                      child: Text(
+                        '我的提问',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blueGrey,
+                        ),
+                      ),
+                    ),
+                    ...myQuestions.map((item) {
+                      final recipientCount =
+                          (item['recipients'] as List).length;
+                      return Card(
+                        margin: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                        color: Colors.blue.shade50,
+                        child: ListTile(
+                          leading: const CircleAvatar(
+                            backgroundColor: Colors.blue,
+                            child: Icon(Icons.help, color: Colors.white),
+                          ),
+                          title: Text(
+                            item['content'],
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            '发送给 $recipientCount 位用户 • ${_formatTime(item['timestamp'])}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => QuestionRepliesPage(
+                                  question: item['content'],
+                                  recipientCount: recipientCount,
+                                  recipientIds:
+                                      (item['recipients'] as List).cast<int>(),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      );
+                    }),
+                  ],
+
+                  if (incomingQuestions.isNotEmpty) ...[
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+                      child: Text(
+                        '向我提问',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blueGrey,
+                        ),
+                      ),
+                    ),
+                    ...incomingQuestions.map((item) {
+                      final partnerId = item['partner_id'] as int;
+                      final partnerName = item['partner_name'] as String;
+                      final partnerAvatar = item['partner_avatar'] as String;
+
+                      return Card(
+                        margin: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                        child: ListTile(
+                          leading: (partnerAvatar.isNotEmpty)
+                              ? CircleAvatar(
+                                  backgroundImage: CachedNetworkImageProvider(
+                                    partnerAvatar.startsWith('http')
+                                        ? partnerAvatar
+                                        : 'http://8.136.205.255:8000$partnerAvatar',
+                                  ),
+                                )
+                              : CircleAvatar(
+                                  backgroundColor: Colors.orange.shade100,
+                                  child: Text(
+                                    partnerName.substring(0, 1),
+                                    style: const TextStyle(color: Colors.orange),
+                                  ),
+                                ),
+                          title: Text(
+                            item['content'],
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            '来自 $partnerName • ${_formatTime(item['timestamp'])}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          trailing: const Icon(Icons.chat),
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => ChatPage(
+                                  title: partnerName,
+                                  avatar: partnerAvatar,
+                                  partnerId: partnerId,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      );
+                    }),
+                  ],
+
+                  if (mySos.isNotEmpty) ...[
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+                      child: Text(
+                        '我的求救',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.redAccent,
+                        ),
+                      ),
+                    ),
+                    ...mySos.map((item) {
+                      final partnerId = item['partner_id'] as int;
+                      final partnerName = item['partner_name'] as String;
+                      final partnerAvatar = item['partner_avatar'] as String;
+
+                      return Card(
+                        margin: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                        color: Colors.red.shade50,
+                        shape: RoundedRectangleBorder(
+                          side: BorderSide(
+                            color: Colors.red.shade200,
+                            width: 1,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: ListTile(
+                          leading: (partnerAvatar.isNotEmpty)
+                              ? CircleAvatar(
+                                  backgroundImage: CachedNetworkImageProvider(
+                                    partnerAvatar.startsWith('http')
+                                        ? partnerAvatar
+                                        : 'http://8.136.205.255:8000$partnerAvatar',
+                                  ),
+                                )
+                              : CircleAvatar(
+                                  backgroundColor: Colors.red.shade100,
+                                  child: const Icon(
+                                    Icons.warning_amber_rounded,
+                                    color: Colors.red,
+                                  ),
+                                ),
+                          title: Text(
+                            item['content'],
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.red,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          subtitle: Text(
+                            partnerId == 0
+                                ? '广播给所有人'
+                                : '与 $partnerName • ${_formatTime(item['timestamp'])}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          trailing: const Icon(Icons.chat),
+                          onTap: () {
+                            if (partnerId == 0) return;
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => ChatPage(
+                                  title: partnerName,
+                                  avatar: partnerAvatar,
+                                  partnerId: partnerId,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      );
+                    }),
+                  ],
+
+                  if (incomingSos.isNotEmpty) ...[
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+                      child: Text(
+                        '向我求救',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.redAccent,
+                        ),
+                      ),
+                    ),
+                    ...incomingSos.map((item) {
+                      final partnerId = item['partner_id'] as int;
+                      final partnerName = item['partner_name'] as String;
+                      final partnerAvatar = item['partner_avatar'] as String;
+
+                      return Card(
+                        margin: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                        color: Colors.red.shade50,
+                        shape: RoundedRectangleBorder(
+                          side: BorderSide(
+                            color: Colors.red.shade200,
+                            width: 1,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: ListTile(
+                          leading: (partnerAvatar.isNotEmpty)
+                              ? CircleAvatar(
+                                  backgroundImage: CachedNetworkImageProvider(
+                                    partnerAvatar.startsWith('http')
+                                        ? partnerAvatar
+                                        : 'http://8.136.205.255:8000$partnerAvatar',
+                                  ),
+                                )
+                              : CircleAvatar(
+                                  backgroundColor: Colors.red.shade100,
+                                  child: const Icon(
+                                    Icons.warning_amber_rounded,
+                                    color: Colors.red,
+                                  ),
+                                ),
+                          title: Text(
+                            item['content'],
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.red,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          subtitle: Text(
+                            '来自 $partnerName • ${_formatTime(item['timestamp'])}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          trailing: const Icon(Icons.chat),
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => ChatPage(
+                                  title: partnerName,
+                                  avatar: partnerAvatar,
+                                  partnerId: partnerId,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      );
+                    }),
+                  ],
+                ],
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
 
   Widget _buildMyFeedbacksList() {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
