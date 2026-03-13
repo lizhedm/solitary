@@ -253,7 +253,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
       },
     );
   }
-  
+
   String _formatTime(int timestamp) {
     final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
     final now = DateTime.now();
@@ -563,53 +563,67 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
 
   /// 新版本的临时会话列表：明确拆分为「我的提问 / 向我提问 / 我的求救 / 向我求救」四大类
   Widget _buildTemporaryListV2() {
-    return Consumer<MessageProvider>(
-      builder: (context, provider, child) {
-        final authProvider = Provider.of<AuthProvider>(context, listen: false);
-        final currentUserId = authProvider.user?.id;
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final currentUserId = authProvider.user?.id;
 
-        if (currentUserId == null) {
-          return const Center(child: Text('请先登录'));
-        }
+    if (currentUserId == null) {
+      return const Center(child: Text('请先登录'));
+    }
 
-        return RefreshIndicator(
-          onRefresh: () async {
-            provider.startPolling(currentUserId);
-            await provider.fetchNewMessages(currentUserId);
-            setState(() {});
-          },
-          child: FutureBuilder<Map<String, List<Map<String, dynamic>>>>(
-            future: DatabaseHelper().database.then((db) async {
+    return RefreshIndicator(
+      onRefresh: () async {
+        final provider = Provider.of<MessageProvider>(context, listen: false);
+        provider.startPolling(currentUserId);
+        await provider.fetchNewMessages(currentUserId);
+        setState(() {});
+      },
+      child: FutureBuilder<Map<String, List<Map<String, dynamic>>>>(
+        future: DatabaseHelper().database.then((db) async {
               debugPrint('Fetching all messages for temporary session list (v2)...');
 
-              // 仅展示“本次徒步（开始~结束）”时间段内的临时会话：
-              // 这里以本地 hiking_records 中 end_time 为空的记录作为“正在进行的徒步”标记。
-              final activeHike = await db.query(
-                'hiking_records',
-                where: 'user_id = ? AND end_time IS NULL',
-                whereArgs: [currentUserId],
-                orderBy: 'start_time DESC',
-                limit: 1,
-              );
-              if (activeHike.isEmpty) {
-                return {
-                  'my_questions': <Map<String, dynamic>>[],
-                  'incoming_questions': <Map<String, dynamic>>[],
-                  'my_sos': <Map<String, dynamic>>[],
-                  'incoming_sos': <Map<String, dynamic>>[],
-                };
-              }
-
-              final startSeconds = activeHike.first['start_time'] as int? ?? 0;
-              final startMs = startSeconds * 1000;
+              // 这里不再强制依赖「正在进行中的徒步记录」，而是直接读取当前用户的所有相关临时消息。
+              // 这样即使本次徒步已结束或本地记录异常，临时会话中的“提问 / SOS”也能正常展示。
+              final startMs = 0;
               final endMs = DateTime.now().millisecondsSinceEpoch;
 
-              final allMessages = await db.query(
+              var allMessages = await db.query(
                 'messages',
                 where: '(sender_id = ? OR receiver_id = ?) AND timestamp >= ? AND timestamp <= ?',
                 whereArgs: [currentUserId, currentUserId, startMs, endMs],
                 orderBy: 'timestamp DESC',
               );
+
+              // 如果本地没有同步到 messages（常见：刚装机/刚登录/轮询未触发），这里兜底从服务端拉一次再写入本地。
+              if (allMessages.isEmpty) {
+                try {
+                  final resp = await ApiService().get('/messages');
+                  if (resp.statusCode == 200 && resp.data is List) {
+                    for (final item in (resp.data as List)) {
+                      if (item is! Map) continue;
+                      final m = Map<String, dynamic>.from(item);
+                      // 映射到本地 messages 表结构
+                      m['remote_id'] = m['id'];
+                      m.remove('id');
+                      m['sync_status'] = 0;
+                      // 兼容 is_read bool/int
+                      if (m['is_read'] is bool) {
+                        m['is_read'] = (m['is_read'] == true) ? 1 : 0;
+                      }
+                      await DatabaseHelper().saveMessage(m);
+                    }
+                  }
+                } catch (e) {
+                  debugPrint('Temp list fallback sync /messages failed: $e');
+                }
+
+                // 重新读取本地
+                allMessages = await db.query(
+                  'messages',
+                  where: '(sender_id = ? OR receiver_id = ?) AND timestamp >= ? AND timestamp <= ?',
+                  whereArgs: [currentUserId, currentUserId, startMs, endMs],
+                  orderBy: 'timestamp DESC',
+                );
+              }
 
               // 四大类容器
               final Map<String, Map<String, dynamic>> myQuestionsMap = {};
@@ -1133,8 +1147,6 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
             },
           ),
         );
-      },
-    );
   }
 
   Widget _buildMyFeedbacksList() {
