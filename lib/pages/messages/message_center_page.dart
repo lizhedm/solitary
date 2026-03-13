@@ -4,6 +4,7 @@ import 'package:solitary/providers/auth_provider.dart';
 import 'package:solitary/providers/message_provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:convert';
+import 'dart:async';
 import '../../services/database_helper.dart';
 import 'chat_page.dart';
 import 'question_replies_page.dart';
@@ -21,6 +22,12 @@ class MessageCenterPage extends StatefulWidget {
 
 class _MessageCenterPageState extends State<MessageCenterPage> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  int _tempListVersion = 0;
+  Timer? _tempRefreshDebounce;
+  Map<String, List<Map<String, dynamic>>>? _tempCache;
+  Future<Map<String, List<Map<String, dynamic>>>>? _tempFuture;
+  int _tempFutureVersion = -1;
+  VoidCallback? _providerListener;
 
   @override
   void initState() {
@@ -43,6 +50,21 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
         // Also fetch feedbacks initially
         msgProvider.fetchMyFeedbacks(authProvider.user!.id);
       }
+
+      // 监听轮询更新：让“临时会话”在几秒内自动刷新（不需要退出重登）
+      _providerListener = () {
+        // 只在“临时会话”tab时刷新，避免不必要的重建
+        if (!mounted) return;
+        if (_tabController.index != 1) return;
+        _tempRefreshDebounce?.cancel();
+        _tempRefreshDebounce = Timer(const Duration(milliseconds: 350), () {
+          if (!mounted) return;
+          setState(() {
+            _tempListVersion++;
+          });
+        });
+      };
+      msgProvider.addListener(_providerListener!);
     });
   }
 
@@ -56,12 +78,245 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
 
   @override
   void dispose() {
+    final msgProvider = Provider.of<MessageProvider>(context, listen: false);
+    if (_providerListener != null) {
+      msgProvider.removeListener(_providerListener!);
+    }
+    _tempRefreshDebounce?.cancel();
     _tabController.dispose();
     // Don't stop polling here if we want background updates, 
     // but for now, let's keep it bound to the provider's lifecycle or page
     // Actually MessageProvider is global, so maybe don't stop?
     // But to save resources when leaving tab... let's keep polling active for now.
     super.dispose();
+  }
+
+  Future<Map<String, List<Map<String, dynamic>>>> _getTempFuture(int currentUserId) {
+    if (_tempFuture != null && _tempFutureVersion == _tempListVersion) {
+      return _tempFuture!;
+    }
+    _tempFutureVersion = _tempListVersion;
+    _tempFuture = _loadTemporaryDataV2(currentUserId);
+    return _tempFuture!;
+  }
+
+  Future<Map<String, List<Map<String, dynamic>>>> _loadTemporaryDataV2(int currentUserId) async {
+    final db = await DatabaseHelper().database;
+    debugPrint('Fetching all messages for temporary session list (v2)...');
+
+    // 只展示“当前进行中的徒步”时间段内产生的临时会话。
+    // 如果当前没有进行中的徒步（end_time 为空的记录），则临时会话列表为空。
+    final activeHike = await db.query(
+      'hiking_records',
+      where: 'user_id = ? AND end_time IS NULL',
+      whereArgs: [currentUserId],
+      orderBy: 'start_time DESC',
+      limit: 1,
+    );
+    if (activeHike.isEmpty) {
+      return {
+        'my_questions': <Map<String, dynamic>>[],
+        'incoming_questions': <Map<String, dynamic>>[],
+        'my_sos': <Map<String, dynamic>>[],
+        'incoming_sos': <Map<String, dynamic>>[],
+      };
+    }
+
+    final startSeconds = activeHike.first['start_time'] as int? ?? 0;
+    final startMs = startSeconds * 1000;
+    final endMs = DateTime.now().millisecondsSinceEpoch;
+
+    var allMessages = await db.query(
+      'messages',
+      where:
+          '(sender_id = ? OR receiver_id = ?) AND timestamp >= ? AND timestamp <= ?',
+      whereArgs: [currentUserId, currentUserId, startMs, endMs],
+      orderBy: 'timestamp DESC',
+    );
+
+    // 本地无数据时兜底同步一次（避免必须退出重登才看到）
+    if (allMessages.isEmpty) {
+      try {
+        final resp = await ApiService().get('/messages');
+        if (resp.statusCode == 200 && resp.data is List) {
+          for (final item in (resp.data as List)) {
+            if (item is! Map) continue;
+            final m = Map<String, dynamic>.from(item);
+            m['remote_id'] = m['id'];
+            m.remove('id');
+            m['sync_status'] = 0;
+            if (m['is_read'] is bool) {
+              m['is_read'] = (m['is_read'] == true) ? 1 : 0;
+            }
+            await DatabaseHelper().saveMessage(m);
+          }
+        }
+      } catch (e) {
+        debugPrint('Temp list fallback sync /messages failed: $e');
+      }
+
+      allMessages = await db.query(
+        'messages',
+        where:
+            '(sender_id = ? OR receiver_id = ?) AND timestamp >= ? AND timestamp <= ?',
+        whereArgs: [currentUserId, currentUserId, startMs, endMs],
+        orderBy: 'timestamp DESC',
+      );
+    }
+
+    final Map<String, Map<String, dynamic>> myQuestionsMap = {};
+    final Map<String, Map<String, dynamic>> incomingQuestionsMap = {};
+    final Map<String, Map<String, dynamic>> incomingSosMap = {};
+
+    for (var msg in allMessages) {
+      final type = msg['type'] as String? ?? 'text';
+      final senderId = msg['sender_id'] as int;
+      final receiverId = msg['receiver_id'] as int;
+      final hikeId = msg['hike_id'] as int?;
+      final timestamp = msg['timestamp'] as int;
+
+      if (type == 'question' && (hikeId == null || hikeId == 0)) {
+        final content = msg['content'] as String;
+        if (senderId == currentUserId) {
+          if (!myQuestionsMap.containsKey(content)) {
+            myQuestionsMap[content] = {
+              'content': content,
+              'timestamp': timestamp,
+              'recipients': <int>[],
+            };
+          }
+          final recipients = myQuestionsMap[content]!['recipients'] as List<int>;
+          if (!recipients.contains(receiverId)) recipients.add(receiverId);
+        } else if (receiverId == currentUserId) {
+          final partnerId = senderId;
+          final key = 'question_incoming_${partnerId}_$content';
+          if (incomingQuestionsMap.containsKey(key)) {
+            final existingTime =
+                (incomingQuestionsMap[key]!['msg'] as Map)['timestamp'] as int;
+            if (timestamp <= existingTime) continue;
+          }
+          incomingQuestionsMap[key] = {'msg': msg, 'partner_id': partnerId};
+        }
+        continue;
+      }
+
+      if (type == 'sos' && receiverId == currentUserId) {
+        final partnerId = senderId;
+        final remoteId = msg['remote_id'];
+        final baseKey =
+            remoteId != null ? remoteId.toString() : '${partnerId}_$timestamp';
+        final key = 'sos_incoming_$baseKey';
+        if (incomingSosMap.containsKey(key)) {
+          final existingTime =
+              (incomingSosMap[key]!['msg'] as Map)['timestamp'] as int;
+          if (timestamp <= existingTime) continue;
+        }
+        incomingSosMap[key] = {'msg': msg, 'partner_id': partnerId};
+        continue;
+      }
+    }
+
+    final myQuestionList = myQuestionsMap.values.toList();
+    myQuestionList.sort(
+        (a, b) => (b['timestamp'] as int).compareTo(a['timestamp'] as int));
+
+    final List<Map<String, dynamic>> incomingQuestionList = [];
+    for (var item in incomingQuestionsMap.values) {
+      final msg = item['msg'] as Map<String, dynamic>;
+      final partnerId = item['partner_id'] as int;
+      String name = '用户 $partnerId';
+      String avatar = '';
+
+      var contact = await DatabaseHelper().getContact(partnerId);
+      if (contact != null) {
+        name = contact['nickname'] ?? name;
+        avatar = contact['avatar'] ?? avatar;
+      } else {
+        // 兜底从服务端拉一次用户信息，用于展示头像（与详情页逻辑保持一致）
+        try {
+          final resp = await ApiService().get('/users/$partnerId');
+          if (resp.statusCode == 200 && resp.data != null) {
+            final user = resp.data;
+            name = user['nickname'] ?? name;
+            avatar = user['avatar'] ?? avatar;
+          }
+        } catch (e) {
+          debugPrint('Error fetching user info for $partnerId: $e');
+        }
+      }
+
+      incomingQuestionList.add({
+        'partner_id': partnerId,
+        'partner_name': name,
+        'partner_avatar': avatar,
+        'content': '收到提问: ${msg['content']}',
+        'timestamp': msg['timestamp'],
+      });
+    }
+    incomingQuestionList.sort(
+        (a, b) => (b['timestamp'] as int).compareTo(a['timestamp'] as int));
+
+    final mySosEvents = await db.query(
+      'sos_events',
+      where: 'user_id = ? AND created_at >= ? AND created_at <= ?',
+      whereArgs: [currentUserId, startMs, endMs],
+      orderBy: 'created_at DESC',
+    );
+
+    final List<Map<String, dynamic>> incomingSosList = [];
+    for (var item in incomingSosMap.values) {
+      final msg = item['msg'] as Map<String, dynamic>;
+      final partnerId = item['partner_id'] as int;
+      String name = partnerId == 0 ? '所有人 (SOS广播)' : '用户 $partnerId';
+      String avatar = '';
+      if (partnerId != 0) {
+        var contact = await DatabaseHelper().getContact(partnerId);
+        if (contact != null) {
+          name = contact['nickname'] ?? name;
+          avatar = contact['avatar'] ?? avatar;
+        } else {
+          try {
+            final resp = await ApiService().get('/users/$partnerId');
+            if (resp.statusCode == 200 && resp.data != null) {
+              final user = resp.data;
+              name = user['nickname'] ?? name;
+              avatar = user['avatar'] ?? avatar;
+            }
+          } catch (e) {
+            debugPrint('Error fetching user info for $partnerId: $e');
+          }
+        }
+      }
+      String dangerLabel = '未知危险';
+      int safetyStatus = 0;
+      List urgentLabels = [];
+      try {
+        final data = jsonDecode(msg['content'] as String? ?? '{}');
+        dangerLabel = data['danger_label'] ?? dangerLabel;
+        safetyStatus = data['safety_status'] ?? safetyStatus;
+        urgentLabels = (data['urgent_labels'] as List?) ?? [];
+      } catch (_) {}
+
+      incomingSosList.add({
+        'partner_id': partnerId,
+        'partner_name': name,
+        'partner_avatar': avatar,
+        'content': '[SOS求救] 收到他的求救信号',
+        'timestamp': msg['timestamp'],
+        'danger_label': dangerLabel,
+        'safety_status': safetyStatus,
+        'urgent_labels': urgentLabels,
+      });
+    }
+    incomingSosList.sort(
+        (a, b) => (b['timestamp'] as int).compareTo(a['timestamp'] as int));
+
+    return {
+      'my_questions': myQuestionList,
+      'incoming_questions': incomingQuestionList,
+      'my_sos': mySosEvents,
+      'incoming_sos': incomingSosList,
+    };
   }
 
   @override
@@ -575,256 +830,26 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
         final provider = Provider.of<MessageProvider>(context, listen: false);
         provider.startPolling(currentUserId);
         await provider.fetchNewMessages(currentUserId);
+        if (mounted) {
+          setState(() {
+            _tempListVersion++;
+          });
+        }
         setState(() {});
       },
       child: FutureBuilder<Map<String, List<Map<String, dynamic>>>>(
-        future: DatabaseHelper().database.then((db) async {
-              debugPrint('Fetching all messages for temporary session list (v2)...');
-
-              // 这里不再强制依赖「正在进行中的徒步记录」，而是直接读取当前用户的所有相关临时消息。
-              // 这样即使本次徒步已结束或本地记录异常，临时会话中的“提问 / SOS”也能正常展示。
-              final startMs = 0;
-              final endMs = DateTime.now().millisecondsSinceEpoch;
-
-              var allMessages = await db.query(
-                'messages',
-                where: '(sender_id = ? OR receiver_id = ?) AND timestamp >= ? AND timestamp <= ?',
-                whereArgs: [currentUserId, currentUserId, startMs, endMs],
-                orderBy: 'timestamp DESC',
-              );
-
-              // 如果本地没有同步到 messages（常见：刚装机/刚登录/轮询未触发），这里兜底从服务端拉一次再写入本地。
-              if (allMessages.isEmpty) {
-                try {
-                  final resp = await ApiService().get('/messages');
-                  if (resp.statusCode == 200 && resp.data is List) {
-                    for (final item in (resp.data as List)) {
-                      if (item is! Map) continue;
-                      final m = Map<String, dynamic>.from(item);
-                      // 映射到本地 messages 表结构
-                      m['remote_id'] = m['id'];
-                      m.remove('id');
-                      m['sync_status'] = 0;
-                      // 兼容 is_read bool/int
-                      if (m['is_read'] is bool) {
-                        m['is_read'] = (m['is_read'] == true) ? 1 : 0;
-                      }
-                      await DatabaseHelper().saveMessage(m);
-                    }
-                  }
-                } catch (e) {
-                  debugPrint('Temp list fallback sync /messages failed: $e');
-                }
-
-                // 重新读取本地
-                allMessages = await db.query(
-                  'messages',
-                  where: '(sender_id = ? OR receiver_id = ?) AND timestamp >= ? AND timestamp <= ?',
-                  whereArgs: [currentUserId, currentUserId, startMs, endMs],
-                  orderBy: 'timestamp DESC',
-                );
-              }
-
-              // 四大类容器
-              final Map<String, Map<String, dynamic>> myQuestionsMap = {};
-              final Map<String, Map<String, dynamic>> incomingQuestionsMap = {};
-              final Map<String, Map<String, dynamic>> incomingSosMap = {};
-
-              for (var msg in allMessages) {
-                final type = msg['type'] as String? ?? 'text';
-                final senderId = msg['sender_id'] as int;
-                final receiverId = msg['receiver_id'] as int;
-                final hikeId = msg['hike_id'] as int?;
-                final timestamp = msg['timestamp'] as int;
-
-                // --- 提问类 ---
-                if (type == 'question' && (hikeId == null || hikeId == 0)) {
-                  final content = msg['content'] as String;
-
-                  // 1. 我的提问：我作为发送方
-                  if (senderId == currentUserId) {
-                    if (!myQuestionsMap.containsKey(content)) {
-                      myQuestionsMap[content] = {
-                        'content': content,
-                        'timestamp': timestamp,
-                        'recipients': <int>[],
-                      };
-                    }
-                    final recipients =
-                        myQuestionsMap[content]!['recipients'] as List<int>;
-                    if (!recipients.contains(receiverId)) {
-                      recipients.add(receiverId);
-                    }
-                  }
-                  // 2. 向我提问：我作为接收方
-                  else if (receiverId == currentUserId) {
-                    final partnerId = senderId;
-                    final key = 'question_incoming_${partnerId}_$content';
-
-                    if (incomingQuestionsMap.containsKey(key)) {
-                      final existingTime =
-                          (incomingQuestionsMap[key]!['msg'] as Map)['timestamp']
-                              as int;
-                      if (timestamp <= existingTime) continue;
-                    }
-                    incomingQuestionsMap[key] = {
-                      'msg': msg,
-                      'partner_id': partnerId,
-                    };
-                  }
-                  continue;
-                }
-
-                // --- 求救类（不限定 hike）---
-                // “我的求救”不再从 messages 里的广播/单条消息推导，而是从本地 sos_events 表读取（折叠成一次事件）。
-                // 这里仅保留“向我求救”的聚合。
-                if (type == 'sos' && receiverId == currentUserId) {
-                  final partnerId = senderId;
-                  final remoteId = msg['remote_id'];
-                  final baseKey = remoteId != null
-                      ? remoteId.toString()
-                      : '${partnerId}_$timestamp';
-                  final key = 'sos_incoming_$baseKey';
-
-                  if (incomingSosMap.containsKey(key)) {
-                    final existingTime =
-                        (incomingSosMap[key]!['msg'] as Map)['timestamp'] as int;
-                    if (timestamp <= existingTime) continue;
-                  }
-
-                  incomingSosMap[key] = {
-                    'msg': msg,
-                    'partner_id': partnerId,
-                  };
-                  continue;
-                }
-              }
-
-              debugPrint(
-                  'Temporary sessions grouped (v2): myQuestions=${myQuestionsMap.length}, incomingQuestions=${incomingQuestionsMap.length}, incomingSos=${incomingSosMap.length}');
-
-              // --- 补充联系人信息 & 展示文案 ---
-              final List<Map<String, dynamic>> myQuestionList =
-                  myQuestionsMap.values.toList();
-              myQuestionList.sort((a, b) =>
-                  (b['timestamp'] as int).compareTo(a['timestamp'] as int));
-
-              final List<Map<String, dynamic>> incomingQuestionList = [];
-              for (var item in incomingQuestionsMap.values) {
-                final msg = item['msg'] as Map<String, dynamic>;
-                final partnerId = item['partner_id'] as int;
-
-                String name = '用户 $partnerId';
-                String avatar = '';
-
-                var contact = await DatabaseHelper().getContact(partnerId);
-                if (contact != null) {
-                  name = contact['nickname'] ?? name;
-                  avatar = contact['avatar'] ?? avatar;
-                } else {
-                  try {
-                    final response =
-                        await ApiService().get('/users/$partnerId');
-                    if (response.statusCode == 200 &&
-                        response.data != null) {
-                      final user = response.data;
-                      name = user['nickname'] ?? name;
-                      avatar = user['avatar'] ?? avatar;
-                    }
-                  } catch (e) {
-                    debugPrint('Error fetching user info for $partnerId: $e');
-                  }
-                }
-
-                incomingQuestionList.add({
-                  'partner_id': partnerId,
-                  'partner_name': name,
-                  'partner_avatar': avatar,
-                  'content': '收到提问: ${msg['content']}',
-                  'timestamp': msg['timestamp'],
-                });
-              }
-              incomingQuestionList.sort((a, b) =>
-                  (b['timestamp'] as int).compareTo(a['timestamp'] as int));
-
-              // 读取“我的求救”事件（一次SOS折叠成一条）
-              final mySosEvents = await db.query(
-                'sos_events',
-                where: 'user_id = ? AND created_at >= ? AND created_at <= ?',
-                whereArgs: [currentUserId, startMs, endMs],
-                orderBy: 'created_at DESC',
-              );
-
-              final List<Map<String, dynamic>> incomingSosList = [];
-              for (var item in incomingSosMap.values) {
-                final msg = item['msg'] as Map<String, dynamic>;
-                final partnerId = item['partner_id'] as int;
-
-                String name =
-                    partnerId == 0 ? '所有人 (SOS广播)' : '用户 $partnerId';
-                String avatar = '';
-
-                if (partnerId != 0) {
-                  var contact = await DatabaseHelper().getContact(partnerId);
-                  if (contact != null) {
-                    name = contact['nickname'] ?? name;
-                    avatar = contact['avatar'] ?? avatar;
-                  } else {
-                    try {
-                      final response =
-                          await ApiService().get('/users/$partnerId');
-                      if (response.statusCode == 200 &&
-                          response.data != null) {
-                        final user = response.data;
-                        name = user['nickname'] ?? name;
-                        avatar = user['avatar'] ?? avatar;
-                      }
-                    } catch (e) {
-                      debugPrint('Error fetching user info for $partnerId: $e');
-                    }
-                  }
-                }
-
-                String dangerLabel = '未知危险';
-                int safetyStatus = 0;
-                List urgentLabels = [];
-                try {
-                  final data = jsonDecode(msg['content'] as String? ?? '{}');
-                  dangerLabel = data['danger_label'] ?? dangerLabel;
-                  safetyStatus = data['safety_status'] ?? safetyStatus;
-                  urgentLabels = (data['urgent_labels'] as List?) ?? [];
-                } catch (_) {}
-
-                incomingSosList.add({
-                  'partner_id': partnerId,
-                  'partner_name': name,
-                  'partner_avatar': avatar,
-                  'content': '[SOS求救] 收到他的求救信号',
-                  'timestamp': msg['timestamp'],
-                  'danger_label': dangerLabel,
-                  'safety_status': safetyStatus,
-                  'urgent_labels': urgentLabels,
-                });
-              }
-              incomingSosList.sort((a, b) =>
-                  (b['timestamp'] as int).compareTo(a['timestamp'] as int));
-
-              return {
-                'my_questions': myQuestionList,
-                'incoming_questions': incomingQuestionList,
-                'my_sos': mySosEvents,
-                'incoming_sos': incomingSosList,
-              };
-            }),
+        future: _getTempFuture(currentUserId),
             builder: (context, snapshot) {
               if (snapshot.hasError) {
                 return Center(child: Text('加载失败: ${snapshot.error}'));
               }
-              if (!snapshot.hasData) {
-                return const Center(child: CircularProgressIndicator());
-              }
-
-              final data = snapshot.data!;
+          final data = snapshot.data ?? _tempCache;
+          if (snapshot.hasData) {
+            _tempCache = snapshot.data;
+          }
+          if (data == null) {
+            return const Center(child: CircularProgressIndicator());
+          }
               final myQuestions = data['my_questions'] ?? [];
               final incomingQuestions = data['incoming_questions'] ?? [];
               final mySos = data['my_sos'] ?? [];

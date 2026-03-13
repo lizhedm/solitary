@@ -387,9 +387,25 @@ class DatabaseHelper {
 
   Future<int> saveFriendMessage(Map<String, dynamic> message) async {
     final db = await database;
+    // 只保留 friend_messages 表真实存在的列，避免多余字段导致 SQLite 报错
+    final allowedKeys = {
+      'local_id',
+      'remote_id',
+      'sender_id',
+      'receiver_id',
+      'content',
+      'type',
+      'timestamp',
+      'is_read',
+      'attachment_url',
+      'sync_status',
+    };
+    final filtered = Map<String, dynamic>.from(message)
+      ..removeWhere((key, value) => !allowedKeys.contains(key));
+
     return await db.insert(
       'friend_messages',
-      message,
+      filtered,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }

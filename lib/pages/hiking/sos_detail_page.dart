@@ -9,7 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:solitary/providers/auth_provider.dart';
 import 'dart:convert';
 import 'package:intl/intl.dart';
-import 'dart:typed_data';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 
 class SOSDetailPage extends StatefulWidget {
   final double? latitude;
@@ -183,15 +183,35 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
         'time': timeStr,
       };
 
-      // 先将现场照片上传到服务器，拿到 URL 列表，再随 SOS 一起写入后端数据库
+      // 先将现场照片压缩并上传到服务器，拿到 URL 列表，再随 SOS 一起写入后端数据库
       final List<String> photoUrls = [];
       for (final p in _photos) {
         try {
-          final bytes = await p.readAsBytes();
+          final originalBytes = await p.readAsBytes();
+          List<int> uploadBytes = originalBytes;
+
+          // 参考头像/路况上传逻辑，对大图做压缩（移动端）
+          if (!kIsWeb && originalBytes.length > 1000000) {
+            try {
+              final compressed = await FlutterImageCompress.compressWithList(
+                originalBytes,
+                quality: 85,
+                format: CompressFormat.jpeg,
+              );
+              if (compressed.isNotEmpty) {
+                uploadBytes = compressed;
+              }
+            } catch (e) {
+              debugPrint('SOS image compress error: $e');
+            }
+          }
+
+          final filename =
+              'sos_${DateTime.now().millisecondsSinceEpoch}_${p.name}';
           final formData = FormData.fromMap({
             'file': MultipartFile.fromBytes(
-              bytes,
-              filename: p.name,
+              uploadBytes,
+              filename: filename,
             ),
           });
           final resp = await ApiService().post('/upload/sos-photo', data: formData);

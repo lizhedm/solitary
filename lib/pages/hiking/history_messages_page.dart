@@ -198,12 +198,12 @@ class _HistoryMessagesPageState extends State<HistoryMessagesPage> {
     
     final Map<int, int> msgCounts = {};
     
-    // Group by partner
+    // Group by partner（排除虚拟用户0：用于广播/SOS，不作为单独对话方展示）
     for (var msg in messages) {
       final senderId = msg['sender_id'] as int;
       final receiverId = msg['receiver_id'] as int;
       final partnerId = (senderId == currentUserId) ? receiverId : senderId;
-      
+      if (partnerId == 0) continue;
       msgCounts[partnerId] = (msgCounts[partnerId] ?? 0) + 1;
     }
     

@@ -137,6 +137,8 @@ class _SOSEventDetailPageState extends State<SOSEventDetailPage> {
     final urgentLabels = (_messageData['urgent_labels'] is List)
         ? (_messageData['urgent_labels'] as List).map((e) => e.toString()).toList()
         : <String>[];
+    final description = _messageData['description']?.toString() ?? '';
+    final timeText = _messageData['time']?.toString() ?? '';
 
     final statusText = safetyStatus == 2 ? '已脱险' : (safetyStatus == 1 ? '暂时安全' : '仍危险');
     final statusColor = safetyStatus == 2 ? Colors.green : (safetyStatus == 1 ? Colors.orange : Colors.red);
@@ -181,6 +183,19 @@ class _SOSEventDetailPageState extends State<SOSEventDetailPage> {
                 const Spacer(),
               ],
             ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _chip(Icons.report, dangerLabel, Colors.red.shade700),
+              _chip(Icons.shield, statusText, statusColor),
+              if (urgentLabels.isNotEmpty)
+                _chip(Icons.inventory_2, urgentLabels.join('、'), Colors.deepOrange),
+              if (timeText.isNotEmpty)
+                _chip(Icons.access_time, timeText, Colors.grey),
+            ],
           ),
           const SizedBox(height: 16),
 
@@ -257,6 +272,35 @@ class _SOSEventDetailPageState extends State<SOSEventDetailPage> {
               ),
             ),
           const SizedBox(height: 16),
+
+          if (description.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.all(16),
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '具体描述',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    description,
+                    style: const TextStyle(fontSize: 14, color: Colors.black87),
+                  ),
+                ],
+              ),
+            ),
 
           const Text('已发送给以下用户', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
