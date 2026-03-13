@@ -15,7 +15,7 @@ if not hasattr(bcrypt, '__about__'):
 from app.routers import auth, hiking, messages, friends
 from app.database import database
 # 显式导入所有模型，确保 create_all 能正确创建表
-from app.models import User, HikingRecord, Message, Feedback, Friendship
+from app.models import User, HikingRecord, Message, Feedback, Friendship, FriendMessage
 from app.database.database import SessionLocal
 from passlib.context import CryptContext
 import time

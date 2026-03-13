@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, aliased
 from typing import List, Optional
 from app.database.database import get_db
-from app.models.message import Feedback, Message, SOSAlert
+from app.models.message import Feedback, Message, SOSAlert, FriendMessage
+from app.models.friendship import Friendship
 from app.routers.auth import get_current_user
 from app.models.user import User
 from pydantic import BaseModel
@@ -36,6 +37,28 @@ class MessageOut(BaseModel):
 
 class MarkReadRequest(BaseModel):
     message_ids: List[int]
+
+
+# --- FriendMessage Models (好友间消息，仅存成为好友后的对话) ---
+
+class FriendMessageCreate(BaseModel):
+    receiver_id: int
+    content: str
+    type: str = "text"  # text, image, emoji
+    attachment_url: Optional[str] = None
+
+class FriendMessageOut(BaseModel):
+    id: int
+    sender_id: int
+    receiver_id: int
+    content: str
+    type: str
+    attachment_url: Optional[str] = None
+    timestamp: int
+    is_read: bool = False
+
+    class Config:
+        from_attributes = True
 
 class MessageAssociateRequest(BaseModel):
     hike_id: int
@@ -251,7 +274,6 @@ def send_message(
         type=msg.type,
         timestamp=int(time.time() * 1000),
         is_read=False,
-        hike_id=msg.hike_id
     )
     db.add(db_msg)
     db.commit()
@@ -364,6 +386,78 @@ def mark_messages_read(
     db.query(Message).filter(
         Message.id.in_(req.message_ids),
         Message.receiver_id == current_user.id
+    ).update({"is_read": True}, synchronize_session=False)
+    db.commit()
+    return {"success": True}
+
+
+def _are_friends(db: Session, user_id: int, other_id: int) -> bool:
+    return db.query(Friendship).filter(
+        ((Friendship.user_id == user_id) & (Friendship.friend_id == other_id)) |
+        ((Friendship.user_id == other_id) & (Friendship.friend_id == user_id)),
+        Friendship.status == "ACCEPTED"
+    ).first() is not None
+
+
+@router.post("/friend-messages", response_model=FriendMessageOut)
+def send_friend_message(
+    msg: FriendMessageCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """发送好友消息：仅当两人已是好友时写入 friend_messages 表。"""
+    receiver = db.query(User).filter(User.id == msg.receiver_id).first()
+    if not receiver:
+        raise HTTPException(status_code=404, detail="Receiver not found")
+    if not _are_friends(db, current_user.id, msg.receiver_id):
+        raise HTTPException(status_code=403, detail="Only friends can send friend messages")
+    db_msg = FriendMessage(
+        sender_id=current_user.id,
+        receiver_id=msg.receiver_id,
+        content=msg.content,
+        type=msg.type or "text",
+        attachment_url=msg.attachment_url,
+        timestamp=int(time.time() * 1000),
+        is_read=False,
+    )
+    db.add(db_msg)
+    db.commit()
+    db.refresh(db_msg)
+    return db_msg
+
+
+@router.get("/friend-messages", response_model=List[FriendMessageOut])
+def get_friend_messages(
+    partner_id: Optional[int] = Query(None),
+    since: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """拉取好友消息：无 partner_id 时返回当前用户所有好友消息；有 partner_id 时仅返回与该好友的对话，且校验好友关系。"""
+    query = db.query(FriendMessage).filter(
+        (FriendMessage.sender_id == current_user.id) | (FriendMessage.receiver_id == current_user.id)
+    )
+    if partner_id is not None:
+        if not _are_friends(db, current_user.id, partner_id):
+            return []
+        query = query.filter(
+            ((FriendMessage.sender_id == current_user.id) & (FriendMessage.receiver_id == partner_id)) |
+            ((FriendMessage.sender_id == partner_id) & (FriendMessage.receiver_id == current_user.id))
+        )
+    if since is not None:
+        query = query.filter(FriendMessage.timestamp > since)
+    return query.order_by(FriendMessage.timestamp.asc()).all()
+
+
+@router.post("/friend-messages/mark-read")
+def mark_friend_messages_read(
+    req: MarkReadRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    db.query(FriendMessage).filter(
+        FriendMessage.id.in_(req.message_ids),
+        FriendMessage.receiver_id == current_user.id
     ).update({"is_read": True}, synchronize_session=False)
     db.commit()
     return {"success": True}

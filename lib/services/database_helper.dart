@@ -22,7 +22,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 9,
+      version: 10,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -98,6 +98,7 @@ class DatabaseHelper {
     
     await _createMessageTables(db);
     await _createSOSEventTables(db);
+    await _createFriendMessageTables(db);
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -158,6 +159,9 @@ class DatabaseHelper {
     if (oldVersion < 9) {
       await _createSOSEventTables(db);
     }
+    if (oldVersion < 10) {
+      await _createFriendMessageTables(db);
+    }
   }
   
   Future<void> _createMessageTables(Database db) async {
@@ -201,6 +205,23 @@ class DatabaseHelper {
         recipients_json TEXT,
         photos_json TEXT,
         created_at INTEGER
+      )
+    ''');
+  }
+
+  Future<void> _createFriendMessageTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE friend_messages(
+        local_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        remote_id INTEGER UNIQUE,
+        sender_id INTEGER,
+        receiver_id INTEGER,
+        content TEXT,
+        type TEXT,
+        timestamp INTEGER,
+        is_read INTEGER DEFAULT 0,
+        attachment_url TEXT,
+        sync_status INTEGER DEFAULT 0
       )
     ''');
   }
@@ -299,6 +320,17 @@ class DatabaseHelper {
     );
   }
 
+  /// 用服务端返回的 remote_id、timestamp 等更新已存在的本地消息，避免重复插入
+  Future<void> updateMessageByLocalId(int localId, Map<String, dynamic> updates) async {
+    final db = await database;
+    await db.update(
+      'messages',
+      updates,
+      where: 'local_id = ?',
+      whereArgs: [localId],
+    );
+  }
+
   Future<List<Map<String, dynamic>>> getMessages(int partnerId, int currentUserId) async {
     final db = await database;
     return await db.query(
@@ -345,6 +377,79 @@ class DatabaseHelper {
     final db = await database;
     await db.update(
       'messages',
+      {'is_read': 1},
+      where: 'sender_id = ? AND receiver_id = ? AND is_read = 0',
+      whereArgs: [partnerId, currentUserId],
+    );
+  }
+
+  // --- Friend Message Helper Methods (好友消息，仅成为好友后的对话) ---
+
+  Future<int> saveFriendMessage(Map<String, dynamic> message) async {
+    final db = await database;
+    return await db.insert(
+      'friend_messages',
+      message,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> updateFriendMessageByLocalId(int localId, Map<String, dynamic> updates) async {
+    final db = await database;
+    await db.update(
+      'friend_messages',
+      updates,
+      where: 'local_id = ?',
+      whereArgs: [localId],
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getFriendMessages(int partnerId, int currentUserId) async {
+    final db = await database;
+    return await db.query(
+      'friend_messages',
+      where: '((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))',
+      whereArgs: [currentUserId, partnerId, partnerId, currentUserId],
+      orderBy: 'timestamp ASC',
+    );
+  }
+
+  Future<Map<String, dynamic>?> getLastFriendMessage(int partnerId, int currentUserId) async {
+    final db = await database;
+    final res = await db.query(
+      'friend_messages',
+      where: '((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))',
+      whereArgs: [currentUserId, partnerId, partnerId, currentUserId],
+      orderBy: 'timestamp DESC',
+      limit: 1,
+    );
+    return res.isNotEmpty ? res.first : null;
+  }
+
+  Future<int> getUnreadFriendCount(int partnerId, int currentUserId) async {
+    final db = await database;
+    final res = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM friend_messages WHERE sender_id = ? AND receiver_id = ? AND is_read = 0',
+      [partnerId, currentUserId],
+    );
+    return Sqflite.firstIntValue(res) ?? 0;
+  }
+
+  Future<List<int>> getUnreadFriendMessageIds(int partnerId, int currentUserId) async {
+    final db = await database;
+    final res = await db.query(
+      'friend_messages',
+      columns: ['remote_id'],
+      where: 'sender_id = ? AND receiver_id = ? AND is_read = 0 AND remote_id IS NOT NULL',
+      whereArgs: [partnerId, currentUserId],
+    );
+    return res.map((e) => e['remote_id'] as int).toList();
+  }
+
+  Future<void> markFriendMessagesAsRead(int partnerId, int currentUserId) async {
+    final db = await database;
+    await db.update(
+      'friend_messages',
       {'is_read': 1},
       where: 'sender_id = ? AND receiver_id = ? AND is_read = 0',
       whereArgs: [partnerId, currentUserId],

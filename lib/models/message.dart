@@ -9,7 +9,9 @@ class Message {
   final int? hikeId;
   final int? senderHikeId;
   final int? receiverHikeId;
-  
+  /// 好友消息中的图片/附件 URL（如 type 为 image 时）
+  final String? attachmentUrl;
+
   Message({
     required this.id,
     required this.senderId,
@@ -21,8 +23,9 @@ class Message {
     this.hikeId,
     this.senderHikeId,
     this.receiverHikeId,
+    this.attachmentUrl,
   });
-  
+
   factory Message.fromJson(Map<String, dynamic> json) {
     return Message(
       id: json['id'] ?? json['remote_id'] ?? json['local_id'] ?? 0,
@@ -35,11 +38,12 @@ class Message {
       hikeId: json['hike_id'],
       senderHikeId: json['sender_hike_id'],
       receiverHikeId: json['receiver_hike_id'],
+      attachmentUrl: json['attachment_url'],
     );
   }
-  
+
   Map<String, dynamic> toJson() {
-    return {
+    final m = <String, dynamic>{
       'id': id,
       'sender_id': senderId,
       'receiver_id': receiverId,
@@ -51,5 +55,7 @@ class Message {
       'sender_hike_id': senderHikeId,
       'receiver_hike_id': receiverHikeId,
     };
+    if (attachmentUrl != null) m['attachment_url'] = attachmentUrl;
+    return m;
   }
 }

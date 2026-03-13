@@ -13,15 +13,18 @@ class ChatPage extends StatefulWidget {
   final int? hikeId; // Keep for compatibility
   final DateTime? startTime;
   final DateTime? endTime;
+  /// 是否为好友会话：true 时读写 friend_messages 与 /friend-messages；false 为临时会话（messages）。
+  final bool isFriendConversation;
 
   const ChatPage({
-    super.key, 
-    required this.title, 
+    super.key,
+    required this.title,
     this.avatar,
     required this.partnerId,
     this.hikeId,
     this.startTime,
     this.endTime,
+    this.isFriendConversation = false,
   });
 
   @override
@@ -69,11 +72,12 @@ class _ChatPageState extends State<ChatPage> {
     if (authProvider.user == null) return;
 
     final msgs = await msgProvider.getMessagesForContact(
-      authProvider.user!.id, 
+      authProvider.user!.id,
       widget.partnerId,
       hikeId: widget.hikeId,
       startTime: widget.startTime,
       endTime: widget.endTime,
+      isFriendConversation: widget.isFriendConversation,
     );
 
     if (mounted) {
@@ -104,13 +108,12 @@ class _ChatPageState extends State<ChatPage> {
     
     if (authProvider.user != null) {
       await msgProvider.sendMessage(
-        authProvider.user!.id, 
-        widget.partnerId, 
-        content
+        authProvider.user!.id,
+        widget.partnerId,
+        content,
+        isFriendConversation: widget.isFriendConversation,
       );
-      // Provider will notify listeners, which calls _onMessageUpdate -> _loadMessages
-      // But we can also manually refresh to be instant
-      _loadMessages();
+      if (mounted) await _loadMessages();
     }
   }
 

@@ -70,12 +70,11 @@ class MessageProvider with ChangeNotifier {
   Future<void> _refreshContactDetails(int currentUserId) async {
     final localContacts = await DatabaseHelper().getContacts();
     final List<Contact> updatedContacts = [];
-    
+    // 好友列表中的联系人：取 lastMessage / unread 来自 friend_messages
     for (var c in localContacts) {
        var contact = Contact.fromJson(c);
-       final lastMsg = await DatabaseHelper().getLastMessage(contact.id, currentUserId);
-       final unread = await DatabaseHelper().getUnreadCount(contact.id, currentUserId);
-       
+       final lastMsg = await DatabaseHelper().getLastFriendMessage(contact.id, currentUserId);
+       final unread = await DatabaseHelper().getUnreadFriendCount(contact.id, currentUserId);
        if (lastMsg != null) {
          contact = contact.copyWith(
            lastMessage: lastMsg['content'],
@@ -85,7 +84,6 @@ class MessageProvider with ChangeNotifier {
        contact = contact.copyWith(unreadCount: unread);
        updatedContacts.add(contact);
     }
-    
     updatedContacts.sort((a, b) => (b.lastMessageTime ?? 0).compareTo(a.lastMessageTime ?? 0));
     _contacts = updatedContacts;
     notifyListeners();
@@ -133,120 +131,164 @@ class MessageProvider with ChangeNotifier {
   }
 
   Future<void> fetchNewMessages(int currentUserId) async {
+    bool hasNew = false;
     try {
-      final response = await _apiService.get('/messages'); 
+      final response = await _apiService.get('/messages');
       if (response.statusCode == 200) {
         final List<dynamic> data = response.data;
-        bool hasNew = false;
-        
         for (var item in data) {
-           final msg = Message.fromJson(item);
-           // Save to DB
-           final map = msg.toJson();
-           map['remote_id'] = msg.id;
-           map.remove('id');
-           map['sync_status'] = 0;
-           
-           // Check if exists (optimization needed)
-           await DatabaseHelper().saveMessage(map);
-           hasNew = true;
-        }
-        
-        if (hasNew) {
-           await _refreshContactDetails(currentUserId);
-           notifyListeners();
+          final msg = Message.fromJson(item);
+          final map = msg.toJson();
+          map['remote_id'] = msg.id;
+          map.remove('id');
+          map['sync_status'] = 0;
+          await DatabaseHelper().saveMessage(map);
+          hasNew = true;
         }
       }
     } catch (e) {
       debugPrint('Fetch messages failed: $e');
     }
+    try {
+      final fmResponse = await _apiService.get('/friend-messages');
+      if (fmResponse.statusCode == 200) {
+        final List<dynamic> data = fmResponse.data;
+        for (var item in data) {
+          final msg = Message.fromJson(Map<String, dynamic>.from(item));
+          final map = msg.toJson();
+          map['remote_id'] = msg.id;
+          map.remove('id');
+          map['sync_status'] = 0;
+          if (item is Map && item.containsKey('attachment_url')) {
+            map['attachment_url'] = item['attachment_url'];
+          }
+          await DatabaseHelper().saveFriendMessage(map);
+          hasNew = true;
+        }
+      }
+    } catch (e) {
+      debugPrint('Fetch friend messages failed: $e');
+    }
+    if (hasNew) {
+      await _refreshContactDetails(currentUserId);
+      notifyListeners();
+    }
   }
   
-  Future<void> sendMessage(int currentUserId, int receiverId, String content, {String type = 'text'}) async {
+  /// [isFriendConversation] 为 true 时走好友消息（friend_messages 表与 /friend-messages 接口），否则走临时会话（messages 表与 /messages）。
+  Future<void> sendMessage(int currentUserId, int receiverId, String content, {String type = 'text', bool isFriendConversation = false}) async {
     final tempMsg = Message(
-      id: 0, // Placeholder
+      id: 0,
       senderId: currentUserId,
       receiverId: receiverId,
       content: content,
       type: type,
       timestamp: DateTime.now().millisecondsSinceEpoch,
-      isRead: false
+      isRead: false,
     );
-    
-    // Save locally first
     final map = tempMsg.toJson();
     map.remove('id');
-    map['sync_status'] = 1; // Pending
+    map['sync_status'] = 1;
+
+    if (isFriendConversation) {
+      final localId = await DatabaseHelper().saveFriendMessage(map);
+      await _refreshContactDetails(currentUserId);
+      notifyListeners();
+      try {
+        final response = await _apiService.post('/friend-messages', data: {
+          'receiver_id': receiverId,
+          'content': content,
+          'type': type,
+        });
+      if (response.statusCode == 200) {
+        final remoteMsg = Message.fromJson(Map<String, dynamic>.from(response.data));
+        await DatabaseHelper().updateFriendMessageByLocalId(localId, {
+          'remote_id': remoteMsg.id,
+          'timestamp': remoteMsg.timestamp,
+          'sync_status': 0,
+          if (response.data is Map && (response.data as Map).containsKey('attachment_url'))
+            'attachment_url': (response.data as Map)['attachment_url'],
+        });
+        await _refreshContactDetails(currentUserId);
+        notifyListeners();
+        }
+      } catch (e) {
+        debugPrint('Send friend message failed: $e');
+      }
+      return;
+    }
+
     final localId = await DatabaseHelper().saveMessage(map);
-    
-    // Refresh UI immediately
     await _refreshContactDetails(currentUserId);
     notifyListeners();
-    
     try {
       final response = await _apiService.post('/messages', data: {
         'receiver_id': receiverId,
         'content': content,
-        'type': type
+        'type': type,
       });
-      
       if (response.statusCode == 200) {
-         final remoteMsg = Message.fromJson(response.data);
-         // Update local
-         map['remote_id'] = remoteMsg.id;
-         map['timestamp'] = remoteMsg.timestamp;
-         map['sync_status'] = 0;
-         map['local_id'] = localId; // Important: update the existing record
-         await DatabaseHelper().saveMessage(map);
-         notifyListeners();
+        final remoteMsg = Message.fromJson(response.data);
+        await DatabaseHelper().updateMessageByLocalId(localId, {
+          'remote_id': remoteMsg.id,
+          'timestamp': remoteMsg.timestamp,
+          'sync_status': 0,
+        });
+        await _refreshContactDetails(currentUserId);
+        notifyListeners();
       }
     } catch (e) {
       debugPrint('Send message failed: $e');
     }
   }
   
-  Future<List<Message>> getMessagesForContact(int currentUserId, int partnerId, {int? hikeId, DateTime? startTime, DateTime? endTime}) async {
-    // 1. Get unread remote IDs to sync with server
+  /// [isFriendConversation] 为 true 时从 friend_messages 读并同步已读到 /friend-messages/mark-read；否则从 messages 读并走 /messages/mark-read。
+  Future<List<Message>> getMessagesForContact(int currentUserId, int partnerId, {int? hikeId, DateTime? startTime, DateTime? endTime, bool isFriendConversation = false}) async {
+    if (isFriendConversation) {
+      final unreadIds = await DatabaseHelper().getUnreadFriendMessageIds(partnerId, currentUserId);
+      await DatabaseHelper().markFriendMessagesAsRead(partnerId, currentUserId);
+      await _refreshContactDetails(currentUserId);
+      if (unreadIds.isNotEmpty) {
+        _apiService.post('/friend-messages/mark-read', data: {'message_ids': unreadIds}).then((_) {
+          debugPrint('Marked ${unreadIds.length} friend messages as read on server');
+        }).catchError((e) {
+          debugPrint('Failed to mark friend messages as read: $e');
+        });
+      }
+      final list = await DatabaseHelper().getFriendMessages(partnerId, currentUserId);
+      return list.map((e) => Message.fromJson(e)).toList();
+    }
+
     final unreadIds = await DatabaseHelper().getUnreadMessageIds(partnerId, currentUserId);
-    
-    // 2. Mark local messages as read
     await DatabaseHelper().markMessagesAsRead(partnerId, currentUserId);
-    
-    // 3. Refresh contact list to update unread count immediately
     await _refreshContactDetails(currentUserId);
-    
-    // 4. Sync read status with server (fire and forget)
     if (unreadIds.isNotEmpty) {
-      _apiService.post('/messages/mark-read', data: {
-        'message_ids': unreadIds
-      }).then((_) {
+      _apiService.post('/messages/mark-read', data: {'message_ids': unreadIds}).then((_) {
         debugPrint('Marked ${unreadIds.length} messages as read on server');
       }).catchError((e) {
         debugPrint('Failed to mark messages as read: $e');
       });
     }
-    
+
     List<Map<String, dynamic>> list;
     if (hikeId != null) {
-      // Fetch messages for a specific hike with this partner
       final allHikeMessages = await DatabaseHelper().getMessagesByHikeId(hikeId, currentUserId);
       list = allHikeMessages.where((msg) {
         final senderId = msg['sender_id'] as int;
         final receiverId = msg['receiver_id'] as int;
-        return (senderId == currentUserId && receiverId == partnerId) || 
-               (senderId == partnerId && receiverId == currentUserId);
+        return (senderId == currentUserId && receiverId == partnerId) ||
+            (senderId == partnerId && receiverId == currentUserId);
       }).toList();
     } else if (startTime != null && endTime != null) {
-      // Fetch messages for a specific time range (more reliable than hikeId)
       final allRangeMessages = await DatabaseHelper().getMessagesByTimeRange(
-        startTime.millisecondsSinceEpoch, 
-        endTime.millisecondsSinceEpoch
+        startTime.millisecondsSinceEpoch,
+        endTime.millisecondsSinceEpoch,
       );
       list = allRangeMessages.where((msg) {
         final senderId = msg['sender_id'] as int;
         final receiverId = msg['receiver_id'] as int;
-        return (senderId == currentUserId && receiverId == partnerId) || 
-               (senderId == partnerId && receiverId == currentUserId);
+        return (senderId == currentUserId && receiverId == partnerId) ||
+            (senderId == partnerId && receiverId == currentUserId);
       }).toList();
     } else {
       list = await DatabaseHelper().getMessages(partnerId, currentUserId);

@@ -1,11 +1,11 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:solitary/services/api_service.dart';
 import 'package:solitary/services/database_helper.dart';
 
+import '../hiking/route_feedback_detail_page.dart';
 import 'chat_page.dart';
 
 class SOSEventDetailPage extends StatefulWidget {
@@ -20,8 +20,9 @@ class SOSEventDetailPage extends StatefulWidget {
 class _SOSEventDetailPageState extends State<SOSEventDetailPage> {
   late final Map<String, dynamic> _messageData;
   late final List<dynamic> _recipients;
-  late final List<String> _photoBase64List;
+  late final List<String> _photoUrls;
   List<Map<String, dynamic>> _recipientCards = [];
+  int _currentIndex = 0;
 
   @override
   void initState() {
@@ -29,7 +30,7 @@ class _SOSEventDetailPageState extends State<SOSEventDetailPage> {
     _messageData = _safeJson(widget.event['message_json']) ?? {};
     _recipients = _safeJson(widget.event['recipients_json']) ?? [];
     final photosJson = _safeJson(widget.event['photos_json']);
-    _photoBase64List = (photosJson is List)
+    _photoUrls = (photosJson is List)
         ? photosJson.map((e) => e.toString()).where((s) => s.isNotEmpty).toList()
         : <String>[];
     _loadRecipients();
@@ -150,6 +151,7 @@ class _SOSEventDetailPageState extends State<SOSEventDetailPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // 头部卡片：整体风格参照路况详情
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -157,58 +159,104 @@ class _SOSEventDetailPageState extends State<SOSEventDetailPage> {
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: Colors.red.shade200),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    const Icon(Icons.warning_amber_rounded, color: Colors.red),
-                    const SizedBox(width: 8),
-                    Text('SOS 求救', style: TextStyle(color: Colors.red.shade900, fontWeight: FontWeight.bold)),
-                  ],
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: statusColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning_amber_rounded, size: 16, color: Colors.red),
+                      const SizedBox(width: 4),
+                      Text(
+                        dangerLabel,
+                        style: TextStyle(color: Colors.red.shade900, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _chip(Icons.report, dangerLabel, Colors.red.shade700),
-                    _chip(Icons.shield, statusText, statusColor),
-                    if (urgentLabels.isNotEmpty)
-                      _chip(Icons.inventory_2, urgentLabels.join('、'), Colors.deepOrange),
-                  ],
-                ),
+                const Spacer(),
               ],
             ),
           ),
           const SizedBox(height: 16),
 
-          if (_photoBase64List.isNotEmpty) ...[
-            const Text('现场照片', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 96,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: _photoBase64List.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 10),
-                itemBuilder: (context, index) {
-                  final b64 = _photoBase64List[index];
-                  Uint8List? bytes;
-                  try {
-                    bytes = base64Decode(b64);
-                  } catch (_) {}
-                  return ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: bytes == null
-                        ? Container(width: 96, height: 96, color: Colors.grey.shade200)
-                        : Image.memory(bytes, width: 96, height: 96, fit: BoxFit.cover),
-                  );
-                },
+          // 现场照片：布局、交互完全复用 route_feedback_detail_page 的风格
+          if (_photoUrls.isNotEmpty)
+            Stack(
+              children: [
+                SizedBox(
+                  height: 250,
+                  child: PageView.builder(
+                    itemCount: _photoUrls.length,
+                    onPageChanged: (index) {
+                      setState(() {
+                        _currentIndex = index;
+                      });
+                    },
+                    itemBuilder: (context, index) {
+                      String url = _photoUrls[index];
+                      if (!url.startsWith('http')) {
+                        url = 'http://8.136.205.255:8000$url';
+                      }
+                      return GestureDetector(
+                        onTap: () {
+                          final fullUrls = _photoUrls.map((p) {
+                            if (!p.startsWith('http')) {
+                              return 'http://8.136.205.255:8000$p';
+                            }
+                            return p;
+                          }).toList();
+
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => ImageViewerPage(
+                                imageUrls: fullUrls,
+                                initialIndex: index,
+                              ),
+                            ),
+                          );
+                        },
+                        child: CachedNetworkImage(
+                          imageUrl: url,
+                          fit: BoxFit.cover,
+                          placeholder: (context, url) => Container(color: Colors.grey[200]),
+                          errorWidget: (context, url, error) => const Icon(Icons.error),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                Positioned(
+                  bottom: 10,
+                  right: 10,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${_currentIndex + 1}/${_photoUrls.length}',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                ),
+              ],
+            )
+          else
+            Container(
+              height: 200,
+              color: Colors.grey[200],
+              child: const Center(
+                child: Text('暂无现场照片', style: TextStyle(color: Colors.grey)),
               ),
             ),
-            const SizedBox(height: 16),
-          ],
+          const SizedBox(height: 16),
 
           const Text('已发送给以下用户', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),

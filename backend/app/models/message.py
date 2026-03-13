@@ -20,6 +20,24 @@ class Message(Base):
     sender = relationship("User", foreign_keys=[sender_id])
     receiver = relationship("User", foreign_keys=[receiver_id])
 
+
+class FriendMessage(Base):
+    """好友间消息：仅保存两人成为好友后的对话（文字、图片、emoji 等）。"""
+    __tablename__ = "friend_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id"))
+    receiver_id = Column(Integer, ForeignKey("users.id"))
+
+    content = Column(String)  # 文本内容或 emoji
+    type = Column(String, default="text")  # text, image, emoji
+    attachment_url = Column(String, nullable=True)  # 图片等附件的 URL
+    timestamp = Column(BigInteger)
+    is_read = Column(Boolean, default=False)
+
+    sender = relationship("User", foreign_keys=[sender_id])
+    receiver = relationship("User", foreign_keys=[receiver_id])
+
 class Feedback(Base):
     __tablename__ = "feedbacks"
     

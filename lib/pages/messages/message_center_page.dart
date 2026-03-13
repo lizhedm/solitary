@@ -240,7 +240,8 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                       builder: (context) => ChatPage(
                         title: contact.nickname,
                         avatar: contact.avatar,
-                        partnerId: contact.id, // Need to update ChatPage to accept ID
+                        partnerId: contact.id,
+                        isFriendConversation: true,
                       ),
                     ),
                   );
