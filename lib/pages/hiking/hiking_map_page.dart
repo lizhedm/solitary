@@ -50,6 +50,7 @@ class _HikingMapPageState extends State<HikingMapPage>
 
   // 当前用户位置（使用LatLng格式）
   LatLng? _position;
+  bool _hasCenteredToLocation = false;
   // 起点位置标记
   LatLng? _startMarkerPosition;
   // 徒步状态：IDLE（空闲）、RUNNING（进行中）、PAUSED（休息/暂停）
@@ -440,6 +441,8 @@ class _HikingMapPageState extends State<HikingMapPage>
 
     // 更新位置
     setState(() {
+      final hadValidPosition =
+          _position != null && _isValidCoordinate(_position!);
       _position = location.latLng;
       // 如果在徒步模式，将位置添加到路径点
       if (_hikingState == 'RUNNING') {
@@ -459,6 +462,14 @@ class _HikingMapPageState extends State<HikingMapPage>
             _elevationGain = (alt - _startAltitude!).round();
           }
         }
+      }
+
+      // 第一次获得有效定位时，自动将镜头移动到当前位置
+      if (!hadValidPosition && !_hasCenteredToLocation) {
+        _hasCenteredToLocation = true;
+        _amapController?.moveCamera(
+          CameraUpdate.newLatLngZoom(_position!, 17),
+        );
       }
     });
     // 添加头像标记
@@ -1473,6 +1484,18 @@ class _HikingMapPageState extends State<HikingMapPage>
     _updateMapMarkers();
   }
 
+  // 路况短标签文案（用于地图标记）
+  static const Map<String, String> _feedbackShortLabels = {
+    'blocked': '断路',
+    'detour': '绕行',
+    'weather': '变天',
+    'water': '水源',
+    'campsite': '营地',
+    'danger': '危险',
+    'supply': '补给',
+    'other': '其他',
+  };
+
   // 更新路况标记缓存
   Future<void> _updateFeedbackMarkers(List<dynamic> feedbacks) async {
     _feedbackMarkersCache.clear();
@@ -1488,20 +1511,23 @@ class _HikingMapPageState extends State<HikingMapPage>
           continue;
         }
         
-        // 根据类型选择图标颜色
+        // 根据类型选择图标颜色与图标
         Color color = Colors.grey;
         IconData iconData = Icons.info;
-        
+
         // 从配置中查找对应的图标和颜色
         final typeOption = _feedbackTypeOptions.firstWhere(
           (element) => element['id'] == type,
           orElse: () => {'color': Colors.grey, 'icon': Icons.info},
         );
-        
         color = typeOption['color'] as Color;
         iconData = typeOption['icon'] as IconData;
-        
-        final iconBytes = await _createIconMarkerBytes(iconData, color);
+
+        final shortLabel =
+            _feedbackShortLabels[type] ?? _feedbackShortLabels['other']!;
+
+        final iconBytes =
+            await _createFeedbackLabelMarkerBytes(shortLabel, color, iconData);
         
         _feedbackMarkersCache[id] = Marker(
           position: LatLng(lat, lng),
@@ -1518,12 +1544,21 @@ class _HikingMapPageState extends State<HikingMapPage>
   // 更新求助标记缓存
   Future<void> _updateSOSMarkers(List<dynamic> alerts) async {
     _sosMarkersCache.clear();
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final currentUserId = authProvider.user?.id;
+
     for (var item in alerts) {
       try {
         final id = item['id'];
         final lat = item['latitude'];
         final lng = item['longitude'];
-        
+
+        // 不在地图上标记当前用户自己长按 SOS 发布的求救
+        final userId = item['user_id'] as int? ?? 0;
+        if (currentUserId != null && userId == currentUserId) {
+          continue;
+        }
+
         final iconBytes = await _createIconMarkerBytes(Icons.sos, Colors.red, isPulse: true);
         
         _sosMarkersCache[id] = Marker(
@@ -1586,6 +1621,67 @@ class _HikingMapPageState extends State<HikingMapPage>
 
     final picture = recorder.endRecording();
     final img = await picture.toImage(size, size);
+    final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
+    return byteData!.buffer.asUint8List();
+  }
+
+  // 生成「图标 + 文字」标签形式的路况标记
+  Future<Uint8List> _createFeedbackLabelMarkerBytes(
+      String label, Color color, IconData icon) async {
+    const width = 160;
+    const height = 64;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final rect = RRect.fromLTRBR(
+      0,
+      0,
+      width.toDouble(),
+      height.toDouble(),
+      const Radius.circular(16),
+    );
+
+    final bgPaint = Paint()..color = color;
+    canvas.drawRRect(rect, bgPaint);
+
+    // 图标
+    final iconPainter = TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(icon.codePoint),
+        style: TextStyle(
+          fontSize: 24,
+          fontFamily: icon.fontFamily,
+          package: icon.fontPackage,
+          color: Colors.white,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    iconPainter.layout();
+    const iconLeft = 12.0;
+    final iconTop = (height - iconPainter.height) / 2;
+    iconPainter.paint(canvas, Offset(iconLeft, iconTop));
+
+    // 文字
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: const TextStyle(
+          fontSize: 22,
+          fontWeight: FontWeight.w600,
+          color: Colors.white,
+        ),
+      ),
+      maxLines: 1,
+      textDirection: TextDirection.ltr,
+      ellipsis: '…',
+    );
+    textPainter.layout(maxWidth: width - 56);
+    final textLeft = 44.0;
+    final textTop = (height - textPainter.height) / 2;
+    textPainter.paint(canvas, Offset(textLeft, textTop));
+
+    final picture = recorder.endRecording();
+    final img = await picture.toImage(width, height);
     final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
     return byteData!.buffer.asUint8List();
   }

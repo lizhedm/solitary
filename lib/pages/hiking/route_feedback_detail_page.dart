@@ -208,10 +208,31 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
                   // User Info
                   Row(
                     children: [
-                      CircleAvatar(
-                        radius: 12,
-                        backgroundColor: Colors.grey[200],
-                        child: Icon(Icons.person, size: 16, color: Colors.grey[400]),
+                      Builder(
+                        builder: (context) {
+                          final avatar = feedback['avatar'] ??
+                              feedback['user_avatar'] ??
+                              feedback['user_avatar'] ??
+                              '';
+                          if (avatar is String && avatar.isNotEmpty) {
+                            String url = avatar;
+                            if (!url.startsWith('http')) {
+                              url = 'http://8.136.205.255:8000$url';
+                            }
+                            return CircleAvatar(
+                              radius: 16,
+                              backgroundImage:
+                                  CachedNetworkImageProvider(url),
+                              backgroundColor: Colors.grey[200],
+                            );
+                          }
+                          return CircleAvatar(
+                            radius: 16,
+                            backgroundColor: Colors.grey[200],
+                            child: Icon(Icons.person,
+                                size: 18, color: Colors.grey[400]),
+                          );
+                        },
                       ),
                       const SizedBox(width: 8),
                       Text(

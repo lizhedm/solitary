@@ -28,6 +28,8 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
   final List<XFile> _photos = [];
   final ImagePicker _picker = ImagePicker();
   String _validity = '3600'; // seconds
+  String? _addressName;
+  bool _isLocatingName = false;
 
   final List<Map<String, dynamic>> _feedbackTypes = [
     {
@@ -194,6 +196,12 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
         }
       }
 
+      // 1.5 如果尚未获取位置名称，这里根据经纬度兜底一个简要位置文案
+      if (_addressName == null) {
+        _addressName =
+            '位置(${lat.toStringAsFixed(4)}, ${lng.toStringAsFixed(4)})';
+      }
+
       // 2. Upload Photos (if any)
       List<String> photoUrls = [];
       if (_photos.isNotEmpty) {
@@ -228,7 +236,7 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
         'content': _descriptionController.text,
         'latitude': lat,
         'longitude': lng,
-        'address': 'Unknown', // Could use geocoding if needed
+        'address': _addressName ?? 'Unknown',
         'photos': jsonEncode(photoUrls),
         'created_at': DateTime.now().millisecondsSinceEpoch,
         'status': 'ACTIVE',
@@ -247,7 +255,7 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
           'content': _descriptionController.text,
           'latitude': lat,
           'longitude': lng,
-          'address': 'Unknown',
+          'address': _addressName ?? 'Unknown',
           'photos': photoUrls,
           'created_at': feedbackData['created_at'],
         };
@@ -390,6 +398,105 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
                     hintText: '描述具体情况，如：前方200米处有塌方，建议绕行...',
                     border: OutlineInputBorder(),
                   ),
+                ),
+                const SizedBox(height: 16),
+
+                // 位置选择与展示
+                Row(
+                  children: [
+                    const Icon(Icons.location_on_outlined,
+                        size: 18, color: Colors.grey),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        _addressName ?? '位置：未获取',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: _addressName == null
+                              ? Colors.grey
+                              : Colors.black87,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton.icon(
+                      onPressed: _isLocatingName
+                          ? null
+                          : () async {
+                              setState(() => _isLocatingName = true);
+                              try {
+                                double lat, lng;
+                                if (widget.latitude != null &&
+                                    widget.longitude != null) {
+                                  lat = widget.latitude!;
+                                  lng = widget.longitude!;
+                                } else {
+                                  final pos =
+                                      await Geolocator.getCurrentPosition(
+                                    desiredAccuracy: LocationAccuracy.high,
+                                    timeLimit:
+                                        const Duration(seconds: 10),
+                                  );
+                                  lat = pos.latitude;
+                                  lng = pos.longitude;
+                                }
+
+                                // 调用后端 /geo/regeo，使用高德逆地理将经纬度转换为地址
+                                String? addr;
+                                try {
+                                  final resp = await ApiService().get(
+                                    '/geo/regeo',
+                                    queryParameters: {
+                                      'lat': lat,
+                                      'lng': lng,
+                                    },
+                                  );
+                                  if (resp.statusCode == 200 &&
+                                      resp.data != null) {
+                                    addr = resp.data['formatted_address']
+                                        as String?;
+                                  }
+                                } catch (e) {
+                                  debugPrint('Regeo failed: $e');
+                                }
+
+                                setState(() {
+                                  _addressName = (addr != null &&
+                                          addr.trim().isNotEmpty)
+                                      ? addr
+                                      : '位置(${lat.toStringAsFixed(4)}, ${lng.toStringAsFixed(4)})';
+                                });
+                              } catch (e) {
+                                debugPrint('Locate name failed: $e');
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context)
+                                      .showSnackBar(const SnackBar(
+                                          content: Text(
+                                              '获取位置失败，请检查定位权限')));
+                                }
+                              } finally {
+                                if (mounted) {
+                                  setState(
+                                      () => _isLocatingName = false);
+                                }
+                              }
+                            },
+                      icon: _isLocatingName
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.my_location, size: 16),
+                      label: const Text(
+                        '获取位置',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 24),
 

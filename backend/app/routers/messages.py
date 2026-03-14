@@ -9,6 +9,8 @@ from app.models.user import User
 from pydantic import BaseModel
 import time
 import json
+import os
+import requests
 
 router = APIRouter()
 
@@ -80,6 +82,7 @@ class FeedbackOut(FeedbackCreate):
     id: int
     user_id: int
     user_name: Optional[str] = None
+    user_avatar: Optional[str] = None
     status: str
     view_count: int
     confirm_count: int
@@ -731,6 +734,78 @@ def get_sos_in_bounds(
         results.append(out)
     return results
 
+
+# --- 高德逆地理编码（ReGeocoding） ---
+
+AMAP_REST_KEY = os.getenv("AMAP_REST_KEY")
+
+
+class RegeoResult(BaseModel):
+    formatted_address: str
+    province: Optional[str] = None
+    city: Optional[str] = None
+    district: Optional[str] = None
+    township: Optional[str] = None
+
+
+@router.get("/geo/regeo", response_model=RegeoResult)
+def gaode_reverse_geocode(
+    lat: float,
+    lng: float,
+):
+    """
+    使用高德 Web 服务进行逆地理编码，将经纬度转换为位置名称。
+
+    返回的数据中，formatted_address 即完整地址，如：
+    "上海市浦东新区世纪大道1号"
+    """
+    if not AMAP_REST_KEY:
+        raise HTTPException(status_code=500, detail="AMAP_REST_KEY is not configured on server")
+
+    try:
+        resp = requests.get(
+            "https://restapi.amap.com/v3/geocode/regeo",
+            params={
+                "key": AMAP_REST_KEY,
+                "location": f"{lng},{lat}",  # 高德要求先经度后纬度
+                "radius": 1000,
+                "extensions": "base",
+                "batch": "false",
+            },
+            timeout=5,
+        )
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Regeo request failed: {e}")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Regeo HTTP {resp.status_code}")
+
+    data = resp.json()
+    if data.get("status") != "1":
+        raise HTTPException(status_code=400, detail=data.get("info", "Regeo failed"))
+
+    regeocode = data.get("regeocode") or {}
+    formatted = regeocode.get("formatted_address") or ""
+    comp = regeocode.get("addressComponent") or {}
+
+    province = comp.get("province") or None
+    city = None
+    if isinstance(comp.get("city"), list):
+        if comp["city"]:
+            city = comp["city"][0]
+    else:
+        city = comp.get("city") or None
+    district = comp.get("district") or None
+    township = comp.get("township") or None
+
+    return RegeoResult(
+        formatted_address=formatted,
+        province=province,
+        city=city,
+        district=district,
+        township=township,
+    )
+
 def create_feedback(
     feedback: FeedbackCreate, 
     db: Session = Depends(get_db), 
@@ -761,6 +836,7 @@ def create_feedback(
             
     out = FeedbackOut.from_orm(db_feedback)
     out.user_name = current_user.nickname
+    out.user_avatar = current_user.avatar
     return out
 
 @router.post("/messages/feedback", response_model=FeedbackOut)
@@ -810,6 +886,7 @@ def get_feedbacks_in_bounds(
         out = FeedbackOut.from_orm(f)
         if f.user:
             out.user_name = f.user.nickname
+            out.user_avatar = f.user.avatar
         results.append(out)
             
     return results
@@ -831,6 +908,7 @@ def get_my_feedbacks(
         
         out = FeedbackOut.from_orm(f)
         out.user_name = current_user.nickname
+        out.user_avatar = current_user.avatar
         results.append(out)
             
     return results
