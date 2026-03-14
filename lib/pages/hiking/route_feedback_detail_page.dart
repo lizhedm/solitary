@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:convert';
 import '../../utils/device_utils.dart';
+import '../../services/api_service.dart';
 
 class RouteFeedbackDetailPage extends StatefulWidget {
   final Map<String, dynamic> feedback;
@@ -15,11 +16,18 @@ class RouteFeedbackDetailPage extends StatefulWidget {
 class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
   bool _isSimulator = false;
   int _currentPhotoIndex = 0;
+  int _viewCount = 0;
+  int _confirmCount = 0;
+  bool _isConfirmed = false;
+  final TextEditingController _commentController = TextEditingController();
+  bool _isPostingComment = false;
+  List<Map<String, dynamic>> _comments = [];
 
   @override
   void initState() {
     super.initState();
     _checkDevice();
+    _initStatsAndComments();
   }
 
   Future<void> _checkDevice() async {
@@ -28,6 +36,59 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
       setState(() {
         _isSimulator = isSim;
       });
+    }
+  }
+
+  Future<void> _initStatsAndComments() async {
+    final feedback = widget.feedback;
+    final id = feedback['id'] as int?;
+    if (id == null) return;
+
+    _viewCount = feedback['view_count'] as int? ?? 0;
+    _confirmCount = feedback['confirm_count'] as int? ?? 0;
+
+    // 浏览+1
+    try {
+      final resp =
+          await ApiService().post('/messages/feedback/$id/view', data: {});
+      if (resp.statusCode == 200 && resp.data != null) {
+        final v = resp.data['view_count'] as int?;
+        if (v != null) {
+          setState(() {
+            _viewCount = v;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('mark view failed: $e');
+    }
+
+    // 确认状态
+    try {
+      final resp = await ApiService()
+          .get('/messages/feedback/$id/confirm-status');
+      if (resp.statusCode == 200 && resp.data != null) {
+        setState(() {
+          _isConfirmed = resp.data['confirmed'] == true;
+          _confirmCount = resp.data['confirm_count'] as int? ?? _confirmCount;
+        });
+      }
+    } catch (e) {
+      debugPrint('load confirm status failed: $e');
+    }
+
+    // 评论列表
+    try {
+      final resp = await ApiService()
+          .get('/messages/feedback/$id/comments');
+      if (resp.statusCode == 200 && resp.data is List) {
+        setState(() {
+          _comments =
+              (resp.data as List).map((e) => Map<String, dynamic>.from(e)).toList();
+        });
+      }
+    } catch (e) {
+      debugPrint('load comments failed: $e');
     }
   }
 
@@ -269,27 +330,161 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
                   ),
                   const SizedBox(height: 24),
                   
-                  // Stats
+                  // Stats + Confirm button
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      _buildStat(Icons.remove_red_eye, '${feedback['view_count'] ?? 0}', '浏览'),
-                      _buildStat(Icons.thumb_up, '${feedback['confirm_count'] ?? 0}', '确认'),
-                      _buildStat(Icons.comment, '0', '评论'), // Mock comment count
+                      _buildStat(
+                          Icons.remove_red_eye, '$_viewCount', '浏览'),
+                      Row(
+                        children: [
+                          _buildStat(Icons.thumb_up, '$_confirmCount', '确认'),
+                          const SizedBox(width: 12),
+                          _isConfirmed
+                              ? OutlinedButton.icon(
+                                  onPressed: null,
+                                  icon: const Icon(Icons.check, size: 16),
+                                  label: const Text('已确认'),
+                                )
+                              : ElevatedButton.icon(
+                                  onPressed: () async {
+                                    final id = feedback['id'] as int?;
+                                    if (id == null) return;
+                                    try {
+                                      final resp = await ApiService().post(
+                                          '/messages/feedback/$id/confirm',
+                                          data: {});
+                                      if (resp.statusCode == 200 &&
+                                          resp.data != null) {
+                                        setState(() {
+                                          _isConfirmed = true;
+                                          _confirmCount =
+                                              resp.data['confirm_count']
+                                                      as int? ??
+                                                  _confirmCount +
+                                                      1; // fallback
+                                        });
+                                      }
+                                    } catch (e) {
+                                      debugPrint(
+                                          'confirm feedback failed: $e');
+                                    }
+                                  },
+                                  icon:
+                                      const Icon(Icons.thumb_up, size: 16),
+                                  label: const Text('确认'),
+                                ),
+                        ],
+                      ),
                     ],
                   ),
                   const SizedBox(height: 24),
                   const Divider(),
                   const SizedBox(height: 16),
-                  
-                  // Comments Section (Mock for now as backend doesn't support comments yet)
-                  const Text('评论 (0)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 16),
-                  const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(32.0),
-                      child: Text('暂无评论', style: TextStyle(color: Colors.grey)),
+
+                  // Comments Section
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '评论 (${_comments.length})',
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  if (_comments.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(16.0),
+                      child: Text('暂无评论',
+                          style: TextStyle(color: Colors.grey)),
+                    )
+                  else
+                    Column(
+                      children: _comments.map((c) {
+                        final name = c['user_name'] ?? '匿名用户';
+                        final content = c['content'] ?? '';
+                        final ts = c['created_at'] as int? ?? 0;
+                        final dt =
+                            DateTime.fromMillisecondsSinceEpoch(ts);
+                        final timeStr =
+                            '${dt.month}/${dt.day} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+                        return ListTile(
+                          dense: true,
+                          title: Text(name,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w500)),
+                          subtitle: Text(content),
+                          trailing: Text(
+                            timeStr,
+                            style: const TextStyle(
+                                fontSize: 11, color: Colors.grey),
+                          ),
+                        );
+                      }).toList(),
                     ),
+                  const SizedBox(height: 12),
+
+                  // Comment input
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _commentController,
+                          minLines: 1,
+                          maxLines: 3,
+                          decoration: const InputDecoration(
+                            hintText: '说点什么...',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: _isPostingComment
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.send),
+                        onPressed: _isPostingComment
+                            ? null
+                            : () async {
+                                final text =
+                                    _commentController.text.trim();
+                                if (text.isEmpty) return;
+                                final id = feedback['id'] as int?;
+                                if (id == null) return;
+                                setState(() => _isPostingComment = true);
+                                try {
+                                  final resp = await ApiService().post(
+                                    '/messages/feedback/$id/comments',
+                                    data: {'content': text},
+                                  );
+                                  if (resp.statusCode == 200 &&
+                                      resp.data != null) {
+                                    setState(() {
+                                      _comments.insert(
+                                          0,
+                                          Map<String, dynamic>.from(
+                                              resp.data));
+                                      _commentController.clear();
+                                    });
+                                  }
+                                } catch (e) {
+                                  debugPrint(
+                                      'post comment failed: $e');
+                                } finally {
+                                  if (mounted) {
+                                    setState(() =>
+                                        _isPostingComment = false);
+                                  }
+                                }
+                              },
+                      ),
+                    ],
                   ),
                 ],
               ),

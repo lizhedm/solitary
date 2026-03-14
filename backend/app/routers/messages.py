@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, aliased
 from typing import List, Optional
 from app.database.database import get_db
-from app.models.message import Feedback, Message, SOSAlert, FriendMessage
+from app.models.message import Feedback, Message, SOSAlert, FriendMessage, FeedbackConfirm, FeedbackComment
 from app.models.friendship import Friendship
 from app.routers.auth import get_current_user
 from app.models.user import User
@@ -805,6 +805,149 @@ def gaode_reverse_geocode(
         district=district,
         township=township,
     )
+
+
+# --- Feedback view / confirm / comments ---
+
+
+class FeedbackCommentCreate(BaseModel):
+    content: str
+
+
+class FeedbackCommentOut(BaseModel):
+    id: int
+    user_id: int
+    user_name: Optional[str] = None
+    content: str
+    created_at: int
+
+    class Config:
+        from_attributes = True
+
+
+@router.post("/messages/feedback/{feedback_id}/view")
+def mark_feedback_viewed(
+    feedback_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    fb = db.query(Feedback).filter(Feedback.id == feedback_id).first()
+    if not fb:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+    fb.view_count = (fb.view_count or 0) + 1
+    db.commit()
+    return {"view_count": fb.view_count}
+
+
+@router.post("/messages/feedback/{feedback_id}/confirm")
+def confirm_feedback(
+    feedback_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    fb = db.query(Feedback).filter(Feedback.id == feedback_id).first()
+    if not fb:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+
+    existing = (
+        db.query(FeedbackConfirm)
+        .filter(
+            FeedbackConfirm.feedback_id == feedback_id,
+            FeedbackConfirm.user_id == current_user.id,
+        )
+        .first()
+    )
+    if existing:
+        return {
+            "confirmed": True,
+            "confirm_count": fb.confirm_count,
+        }
+
+    now_ms = int(time.time() * 1000)
+    conf = FeedbackConfirm(
+        feedback_id=feedback_id,
+        user_id=current_user.id,
+        created_at=now_ms,
+    )
+    db.add(conf)
+    fb.confirm_count = (fb.confirm_count or 0) + 1
+    db.commit()
+    return {
+        "confirmed": True,
+        "confirm_count": fb.confirm_count,
+    }
+
+
+@router.get("/messages/feedback/{feedback_id}/confirm-status")
+def get_feedback_confirm_status(
+    feedback_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    fb = db.query(Feedback).filter(Feedback.id == feedback_id).first()
+    if not fb:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+
+    existing = (
+        db.query(FeedbackConfirm)
+        .filter(
+            FeedbackConfirm.feedback_id == feedback_id,
+            FeedbackConfirm.user_id == current_user.id,
+        )
+        .first()
+    )
+    return {
+        "confirmed": existing is not None,
+        "confirm_count": fb.confirm_count,
+    }
+
+
+@router.get("/messages/feedback/{feedback_id}/comments", response_model=List[FeedbackCommentOut])
+def get_feedback_comments(
+    feedback_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    comments = (
+        db.query(FeedbackComment)
+        .filter(FeedbackComment.feedback_id == feedback_id)
+        .order_by(FeedbackComment.created_at.desc())
+        .all()
+    )
+    results: list[FeedbackCommentOut] = []
+    for c in comments:
+        out = FeedbackCommentOut.from_orm(c)
+        if c.user:
+            out.user_name = c.user.nickname
+        results.append(out)
+    return results
+
+
+@router.post("/messages/feedback/{feedback_id}/comments", response_model=FeedbackCommentOut)
+def add_feedback_comment(
+    feedback_id: int,
+    comment: FeedbackCommentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    fb = db.query(Feedback).filter(Feedback.id == feedback_id).first()
+    if not fb:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+
+    now_ms = int(time.time() * 1000)
+    db_comment = FeedbackComment(
+        feedback_id=feedback_id,
+        user_id=current_user.id,
+        content=comment.content,
+        created_at=now_ms,
+    )
+    db.add(db_comment)
+    db.commit()
+    db.refresh(db_comment)
+
+    out = FeedbackCommentOut.from_orm(db_comment)
+    out.user_name = current_user.nickname
+    return out
 
 def create_feedback(
     feedback: FeedbackCreate, 

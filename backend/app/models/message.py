@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, Boolean, BigInteger
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, Boolean, BigInteger, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.database.database import Base
 
@@ -72,4 +72,33 @@ class SOSAlert(Base):
     created_at = Column(BigInteger)
     resolved_at = Column(BigInteger, nullable=True)
     
+    user = relationship("User")
+
+
+class FeedbackConfirm(Base):
+    __tablename__ = "feedback_confirms"
+
+    id = Column(Integer, primary_key=True, index=True)
+    feedback_id = Column(Integer, ForeignKey("feedbacks.id"), index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    created_at = Column(BigInteger)
+
+    __table_args__ = (
+        UniqueConstraint("feedback_id", "user_id", name="uq_feedback_user_confirm"),
+    )
+
+    feedback = relationship("Feedback")
+    user = relationship("User")
+
+
+class FeedbackComment(Base):
+    __tablename__ = "feedback_comments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    feedback_id = Column(Integer, ForeignKey("feedbacks.id"), index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    content = Column(String)
+    created_at = Column(BigInteger)
+
+    feedback = relationship("Feedback")
     user = relationship("User")
