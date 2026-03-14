@@ -330,51 +330,47 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
                   ),
                   const SizedBox(height: 24),
                   
-                  // Stats + Confirm button
+                  // Stats（浏览 / 确认 / 评论），确认通过点击拇指图标触发
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: [
                       _buildStat(
-                          Icons.remove_red_eye, '$_viewCount', '浏览'),
-                      Row(
-                        children: [
-                          _buildStat(Icons.thumb_up, '$_confirmCount', '确认'),
-                          const SizedBox(width: 12),
-                          _isConfirmed
-                              ? OutlinedButton.icon(
-                                  onPressed: null,
-                                  icon: const Icon(Icons.check, size: 16),
-                                  label: const Text('已确认'),
-                                )
-                              : ElevatedButton.icon(
-                                  onPressed: () async {
-                                    final id = feedback['id'] as int?;
-                                    if (id == null) return;
-                                    try {
-                                      final resp = await ApiService().post(
-                                          '/messages/feedback/$id/confirm',
-                                          data: {});
-                                      if (resp.statusCode == 200 &&
-                                          resp.data != null) {
-                                        setState(() {
-                                          _isConfirmed = true;
-                                          _confirmCount =
-                                              resp.data['confirm_count']
-                                                      as int? ??
-                                                  _confirmCount +
-                                                      1; // fallback
-                                        });
-                                      }
-                                    } catch (e) {
-                                      debugPrint(
-                                          'confirm feedback failed: $e');
-                                    }
-                                  },
-                                  icon:
-                                      const Icon(Icons.thumb_up, size: 16),
-                                  label: const Text('确认'),
-                                ),
-                        ],
+                        Icons.remove_red_eye,
+                        '$_viewCount',
+                        '浏览',
+                      ),
+                      _buildStat(
+                        Icons.thumb_up,
+                        '$_confirmCount',
+                        '确认',
+                        color: _isConfirmed ? Colors.green : Colors.grey,
+                        onTap: () async {
+                          if (_isConfirmed) return;
+                          final id = feedback['id'] as int?;
+                          if (id == null) return;
+                          try {
+                            final resp = await ApiService().post(
+                                '/messages/feedback/$id/confirm',
+                                data: {});
+                            if (resp.statusCode == 200 &&
+                                resp.data != null) {
+                              setState(() {
+                                _isConfirmed = true;
+                                _confirmCount = resp
+                                        .data['confirm_count']
+                                    as int? ??
+                                    _confirmCount + 1;
+                              });
+                            }
+                          } catch (e) {
+                            debugPrint('confirm feedback failed: $e');
+                          }
+                        },
+                      ),
+                      _buildStat(
+                        Icons.comment,
+                        '${_comments.length}',
+                        '评论',
                       ),
                     ],
                   ),
@@ -495,14 +491,33 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
     );
   }
 
-  Widget _buildStat(IconData icon, String value, String label) {
-    return Column(
+  Widget _buildStat(
+    IconData icon,
+    String value,
+    String label, {
+    Color? color,
+    VoidCallback? onTap,
+  }) {
+    final iconColor = color ?? Colors.grey;
+    final content = Column(
       children: [
-        Icon(icon, color: Colors.grey),
+        Icon(icon, color: iconColor),
         const SizedBox(height: 4),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-        Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+        Text(value,
+            style: const TextStyle(
+                fontWeight: FontWeight.bold, fontSize: 16)),
+        Text(label,
+            style:
+                const TextStyle(color: Colors.grey, fontSize: 12)),
       ],
+    );
+    if (onTap == null) return content;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        child: content,
+      ),
     );
   }
 }
