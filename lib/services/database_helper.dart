@@ -22,7 +22,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 11,
+      version: 12,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -100,6 +100,7 @@ class DatabaseHelper {
     await _createMessageTables(db);
     await _createSOSEventTables(db);
     await _createFriendMessageTables(db);
+    await _createFeedbackCommentsTable(db);
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -163,6 +164,9 @@ class DatabaseHelper {
     if (oldVersion < 11) {
       try { await db.execute('ALTER TABLE feedbacks ADD COLUMN user_avatar TEXT'); } catch (_) {}
     }
+    if (oldVersion < 12) {
+      await _createFeedbackCommentsTable(db);
+    }
   }
   
   Future<void> _createMessageTables(Database db) async {
@@ -223,6 +227,20 @@ class DatabaseHelper {
         is_read INTEGER DEFAULT 0,
         attachment_url TEXT,
         sync_status INTEGER DEFAULT 0
+      )
+    ''');
+  }
+
+  Future<void> _createFeedbackCommentsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE feedback_comments(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        remote_id INTEGER UNIQUE,
+        feedback_id INTEGER,
+        user_id INTEGER,
+        user_name TEXT,
+        content TEXT,
+        created_at INTEGER
       )
     ''');
   }
@@ -579,5 +597,24 @@ class DatabaseHelper {
   Future<void> deleteFeedback(int localId) async {
     final db = await database;
     await db.delete('feedbacks', where: 'local_id = ?', whereArgs: [localId]);
+  }
+
+  Future<int> saveFeedbackComment(Map<String, dynamic> comment) async {
+    final db = await database;
+    return await db.insert(
+      'feedback_comments',
+      comment,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getFeedbackComments(int feedbackId) async {
+    final db = await database;
+    return await db.query(
+      'feedback_comments',
+      where: 'feedback_id = ?',
+      whereArgs: [feedbackId],
+      orderBy: 'created_at DESC',
+    );
   }
 }

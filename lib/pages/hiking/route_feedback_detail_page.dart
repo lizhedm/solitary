@@ -36,7 +36,8 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
   }
 
   Future<void> _fetchLatestFeedback() async {
-    final id = _currentFeedback['id'] ?? _currentFeedback['remote_id'];
+    // 优先使用 remote_id，如果没有则尝试 id
+    final id = _currentFeedback['remote_id'] ?? _currentFeedback['id'];
     if (id == null) {
       setState(() => _isLoadingLatest = false);
       return;
@@ -89,7 +90,8 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
   }
 
   Future<void> _initStatsAndComments() async {
-    final id = _currentFeedback['id'] ?? _currentFeedback['remote_id'];
+    // 优先使用 remote_id，如果没有则尝试 id
+    final id = _currentFeedback['remote_id'] ?? _currentFeedback['id'];
     if (id == null) return;
 
     _viewCount = _currentFeedback['view_count'] as int? ?? 0;
@@ -130,13 +132,34 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
       final resp = await ApiService()
           .get('/messages/feedback/$id/comments');
       if (resp.statusCode == 200 && resp.data is List) {
+        final List<Map<String, dynamic>> serverComments = 
+            (resp.data as List).map((e) => Map<String, dynamic>.from(e)).toList();
+            
         setState(() {
-          _comments =
-              (resp.data as List).map((e) => Map<String, dynamic>.from(e)).toList();
+          _comments = serverComments;
+        });
+
+        // Sync comments to local db
+        for (var c in serverComments) {
+          c['feedback_id'] = id;
+          c['remote_id'] = c['id'];
+          c.remove('id');
+          await DatabaseHelper().saveFeedbackComment(c);
+        }
+      } else {
+        // Fallback to local db if offline or server error
+        final localComments = await DatabaseHelper().getFeedbackComments(id);
+        setState(() {
+          _comments = localComments;
         });
       }
     } catch (e) {
       debugPrint('load comments failed: $e');
+      // Fallback to local db
+      final localComments = await DatabaseHelper().getFeedbackComments(id);
+      setState(() {
+        _comments = localComments;
+      });
     }
 
     // 将最新的浏览/确认计数回写本地，方便“我的路况”列表展示最新数据
@@ -509,8 +532,16 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
                                 final text =
                                     _commentController.text.trim();
                                 if (text.isEmpty) return;
-                                final id = feedback['id'] as int?;
-                                if (id == null) return;
+                                
+                                // ID 取值逻辑：优先取 remote_id，如果没有则尝试 id
+                                final id = _currentFeedback['remote_id'] ?? _currentFeedback['id'];
+                                if (id == null) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('错误：无法获取路况ID，无法评论')),
+                                  );
+                                  return;
+                                }
+                                
                                 setState(() => _isPostingComment = true);
                                 try {
                                   final resp = await ApiService().post(
@@ -519,17 +550,31 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
                                   );
                                   if (resp.statusCode == 200 &&
                                       resp.data != null) {
+                                    final newComment = Map<String, dynamic>.from(resp.data);
                                     setState(() {
-                                      _comments.insert(
-                                          0,
-                                          Map<String, dynamic>.from(
-                                              resp.data));
+                                      _comments.insert(0, newComment);
                                       _commentController.clear();
                                     });
+                                    
+                                    // Save to local db
+                                    newComment['feedback_id'] = id;
+                                    newComment['remote_id'] = newComment['id'];
+                                    newComment.remove('id');
+                                    await DatabaseHelper().saveFeedbackComment(newComment);
+                                  } else {
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(content: Text('评论失败: ${resp.statusMessage}')),
+                                      );
+                                    }
                                   }
                                 } catch (e) {
-                                  debugPrint(
-                                      'post comment failed: $e');
+                                  debugPrint('post comment failed: $e');
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('发送失败: $e')),
+                                    );
+                                  }
                                 } finally {
                                   if (mounted) {
                                     setState(() =>
