@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import '../../widgets/common/image_picker_sheet.dart';
 import '../../providers/auth_provider.dart';
 import '../hiking/hiking_history_page.dart';
 import 'privacy_settings_page.dart';
@@ -38,24 +39,8 @@ class _SettingsPageState extends State<SettingsPage> {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final picker = ImagePicker();
 
-    // 显示选择来源的对话框
-    final source = await showDialog<ImageSource>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('选择图片'),
-        content: const Text('请选择图片来源'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, ImageSource.gallery),
-            child: const Text('相册'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, ImageSource.camera),
-            child: const Text('相机'),
-          ),
-        ],
-      ),
-    );
+    // Show bottom sheet to choose source
+    final source = await ImagePickerSheet.showSourcePicker(context);
 
     if (source == null) return;
 

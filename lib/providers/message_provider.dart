@@ -92,36 +92,55 @@ class MessageProvider with ChangeNotifier {
   // Feedback related
   List<Map<String, dynamic>> _myFeedbacks = [];
   List<Map<String, dynamic>> get myFeedbacks => _myFeedbacks;
+  int? _lastMyFeedbacksSyncMs;
 
-  Future<void> fetchMyFeedbacks(int currentUserId) async {
-    // 1. Load from local
+  bool _shouldSyncMyFeedbacks() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (_lastMyFeedbacksSyncMs == null) {
+      _lastMyFeedbacksSyncMs = now;
+      return true;
+    }
+    // 超过60秒才自动重新拉取服务器数据
+    if (now - _lastMyFeedbacksSyncMs! > 60000) {
+      _lastMyFeedbacksSyncMs = now;
+      return true;
+    }
+    return false;
+  }
+
+  Future<void> fetchMyFeedbacks(int currentUserId, {bool forceRefresh = false}) async {
+    // 1. 优先加载本地，保证快速显示
     final localFeedbacks = await DatabaseHelper().getFeedbacks(currentUserId);
     _myFeedbacks = localFeedbacks;
     notifyListeners();
 
-    // 2. Load from API
+    // 2. 根据节流策略决定是否从服务器同步最新数据
+    if (!forceRefresh && !_shouldSyncMyFeedbacks()) {
+      return;
+    }
+
     try {
       final response = await _apiService.get('/messages/feedback/my');
       if (response.statusCode == 200) {
         final List<dynamic> data = response.data;
-        
+
         for (var item in data) {
-           final feedbackData = Map<String, dynamic>.from(item);
-           // Map API response to local DB schema
-           feedbackData['remote_id'] = feedbackData['id'];
-           feedbackData.remove('id');
-           feedbackData['user_id'] = currentUserId;
-           feedbackData['sync_status'] = 0;
-           
-           // Handle photos list -> json string
-           if (feedbackData['photos'] is List) {
-             feedbackData['photos'] = jsonEncode(feedbackData['photos']);
-           }
-           
-           await DatabaseHelper().saveFeedback(feedbackData);
+          final feedbackData = Map<String, dynamic>.from(item);
+          // Map API response to local DB schema
+          feedbackData['remote_id'] = feedbackData['id'];
+          feedbackData.remove('id');
+          feedbackData['user_id'] = currentUserId;
+          feedbackData['sync_status'] = 0;
+
+          // Handle photos list -> json string
+          if (feedbackData['photos'] is List) {
+            feedbackData['photos'] = jsonEncode(feedbackData['photos']);
+          }
+
+          await DatabaseHelper().saveFeedback(feedbackData);
         }
-        
-        // Refresh local list
+
+        // Refresh local list with latest counts from server
         _myFeedbacks = await DatabaseHelper().getFeedbacks(currentUserId);
         notifyListeners();
       }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:convert';
 import '../../utils/device_utils.dart';
+import '../../services/database_helper.dart';
 import '../../services/api_service.dart';
 
 class RouteFeedbackDetailPage extends StatefulWidget {
@@ -22,12 +23,60 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
   final TextEditingController _commentController = TextEditingController();
   bool _isPostingComment = false;
   List<Map<String, dynamic>> _comments = [];
+  late Map<String, dynamic> _currentFeedback;
+  bool _isLoadingLatest = true;
 
   @override
   void initState() {
     super.initState();
+    _currentFeedback = Map<String, dynamic>.from(widget.feedback);
     _checkDevice();
     _initStatsAndComments();
+    _fetchLatestFeedback();
+  }
+
+  Future<void> _fetchLatestFeedback() async {
+    final id = _currentFeedback['id'] ?? _currentFeedback['remote_id'];
+    if (id == null) {
+      setState(() => _isLoadingLatest = false);
+      return;
+    }
+
+    try {
+      final resp = await ApiService().get('/messages/feedbacks/$id');
+      if (resp.statusCode == 200 && resp.data != null) {
+        final data = resp.data;
+        setState(() {
+          _currentFeedback['view_count'] = data['view_count'];
+          _currentFeedback['confirm_count'] = data['confirm_count'];
+          _currentFeedback['content'] = data['content'];
+          _currentFeedback['photos'] = data['photos'] is List ? jsonEncode(data['photos']) : data['photos'];
+          _currentFeedback['user_name'] = data['user_name'];
+          _currentFeedback['user_avatar'] = data['user_avatar'];
+          
+          _viewCount = data['view_count'] ?? 0;
+          _confirmCount = data['confirm_count'] ?? 0;
+          _isLoadingLatest = false;
+        });
+
+        // Sync back to local DB
+        try {
+          final localId = _currentFeedback['local_id'];
+          final updateData = Map<String, dynamic>.from(_currentFeedback);
+          if (localId != null) {
+            updateData['local_id'] = localId; // Ensure local_id is preserved for update
+          }
+          await DatabaseHelper().saveFeedback(updateData);
+        } catch (e) {
+          debugPrint('Failed to sync latest feedback to local DB: $e');
+        }
+      } else {
+        setState(() => _isLoadingLatest = false);
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch latest feedback: $e');
+      setState(() => _isLoadingLatest = false);
+    }
   }
 
   Future<void> _checkDevice() async {
@@ -40,14 +89,13 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
   }
 
   Future<void> _initStatsAndComments() async {
-    final feedback = widget.feedback;
-    final id = feedback['id'] as int?;
+    final id = _currentFeedback['id'] ?? _currentFeedback['remote_id'];
     if (id == null) return;
 
-    _viewCount = feedback['view_count'] as int? ?? 0;
-    _confirmCount = feedback['confirm_count'] as int? ?? 0;
+    _viewCount = _currentFeedback['view_count'] as int? ?? 0;
+    _confirmCount = _currentFeedback['confirm_count'] as int? ?? 0;
 
-    // 浏览+1
+    // 浏览+1（远端）
     try {
       final resp =
           await ApiService().post('/messages/feedback/$id/view', data: {});
@@ -90,11 +138,21 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
     } catch (e) {
       debugPrint('load comments failed: $e');
     }
+
+    // 将最新的浏览/确认计数回写本地，方便“我的路况”列表展示最新数据
+    try {
+      final map = Map<String, dynamic>.from(_currentFeedback)
+        ..['view_count'] = _viewCount
+        ..['confirm_count'] = _confirmCount;
+      await DatabaseHelper().saveFeedback(map);
+    } catch (e) {
+      debugPrint('sync feedback stats to local failed: $e');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final feedback = widget.feedback;
+    final feedback = _currentFeedback;
     final typeMap = {
       'blocked': {'label': '道路阻断', 'color': Colors.red, 'icon': Icons.block},
       'detour': {'label': '建议绕行', 'color': Colors.orange, 'icon': Icons.alt_route},

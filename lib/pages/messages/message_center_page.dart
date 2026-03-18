@@ -1212,7 +1212,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                 ),
                 const SizedBox(height: 24),
                 ElevatedButton(
-                  onPressed: () => provider.fetchMyFeedbacks(userId),
+                  onPressed: () => provider.fetchMyFeedbacks(userId, forceRefresh: true),
                   child: const Text('刷新'),
                 ),
               ],
@@ -1221,7 +1221,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
         }
         
         return RefreshIndicator(
-          onRefresh: () => provider.fetchMyFeedbacks(userId),
+          onRefresh: () => provider.fetchMyFeedbacks(userId, forceRefresh: true),
           child: ListView.builder(
             itemCount: feedbacks.length,
             padding: const EdgeInsets.all(16),

@@ -8,6 +8,7 @@ import 'package:dio/dio.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
+import '../../widgets/common/image_picker_sheet.dart';
 import '../../services/database_helper.dart';
 import '../../services/api_service.dart';
 import '../../providers/auth_provider.dart';
@@ -85,24 +86,8 @@ class _RouteFeedbackPageState extends State<RouteFeedbackPage> {
   Future<void> _takePhoto() async {
     if (_photos.length >= 3) return;
     
-    // Show dialog to choose source
-    final source = await showDialog<ImageSource>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('选择图片'),
-        content: const Text('请选择图片来源'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, ImageSource.gallery),
-            child: const Text('相册'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, ImageSource.camera),
-            child: const Text('相机'),
-          ),
-        ],
-      ),
-    );
+    // Show bottom sheet to choose source
+    final source = await ImagePickerSheet.showSourcePicker(context);
 
     if (source == null) return;
 

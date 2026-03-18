@@ -1034,6 +1034,28 @@ def get_feedbacks_in_bounds(
             
     return results
 
+@router.get("/messages/feedbacks/{feedback_id}", response_model=FeedbackOut)
+def get_feedback(
+    feedback_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    f = db.query(Feedback).filter(Feedback.id == feedback_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+        
+    if f.photos and isinstance(f.photos, str):
+        try:
+            f.photos = json.loads(f.photos)
+        except:
+            f.photos = []
+            
+    out = FeedbackOut.from_orm(f)
+    if f.user:
+        out.user_name = f.user.nickname
+        out.user_avatar = f.user.avatar
+    return out
+
 @router.get("/messages/feedback/my", response_model=List[FeedbackOut])
 def get_my_feedbacks(
     db: Session = Depends(get_db),

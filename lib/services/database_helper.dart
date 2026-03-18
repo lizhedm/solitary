@@ -22,7 +22,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 10,
+      version: 11,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -92,7 +92,8 @@ class DatabaseHelper {
         view_count INTEGER DEFAULT 0,
         confirm_count INTEGER DEFAULT 0,
         sync_status INTEGER DEFAULT 0,
-        user_name TEXT
+        user_name TEXT,
+        user_avatar TEXT
       )
     ''');
     
@@ -159,8 +160,8 @@ class DatabaseHelper {
     if (oldVersion < 9) {
       await _createSOSEventTables(db);
     }
-    if (oldVersion < 10) {
-      await _createFriendMessageTables(db);
+    if (oldVersion < 11) {
+      try { await db.execute('ALTER TABLE feedbacks ADD COLUMN user_avatar TEXT'); } catch (_) {}
     }
   }
   
@@ -313,9 +314,29 @@ class DatabaseHelper {
 
   Future<int> saveMessage(Map<String, dynamic> message) async {
     final db = await database;
+    
+    // Filter out keys that don't exist in the messages table
+    final allowedKeys = {
+      'local_id',
+      'remote_id',
+      'sender_id',
+      'receiver_id',
+      'content',
+      'type',
+      'timestamp',
+      'is_read',
+      'hike_id',
+      'sender_hike_id',
+      'receiver_hike_id',
+      'sync_status'
+    };
+    
+    final filtered = Map<String, dynamic>.from(message)
+      ..removeWhere((key, value) => !allowedKeys.contains(key));
+      
     return await db.insert(
       'messages',
-      message,
+      filtered,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
