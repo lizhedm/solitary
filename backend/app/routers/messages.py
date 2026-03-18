@@ -818,6 +818,7 @@ class FeedbackCommentOut(BaseModel):
     id: int
     user_id: int
     user_name: Optional[str] = None
+    user_avatar: Optional[str] = None
     content: str
     created_at: int
 
@@ -919,6 +920,7 @@ def get_feedback_comments(
         out = FeedbackCommentOut.from_orm(c)
         if c.user:
             out.user_name = c.user.nickname
+            out.user_avatar = c.user.avatar
         results.append(out)
     return results
 
@@ -947,6 +949,7 @@ def add_feedback_comment(
 
     out = FeedbackCommentOut.from_orm(db_comment)
     out.user_name = current_user.nickname
+    out.user_avatar = current_user.avatar
     return out
 
 def create_feedback(

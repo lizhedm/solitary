@@ -1,9 +1,10 @@
-import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/material.dart';
 import 'dart:convert';
 import '../../utils/device_utils.dart';
-import '../../services/database_helper.dart';
 import '../../services/api_service.dart';
+import '../../services/database_helper.dart';
+import '../../models/message.dart';
 
 class RouteFeedbackDetailPage extends StatefulWidget {
   final Map<String, dynamic> feedback;
@@ -481,6 +482,7 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
                     Column(
                       children: _comments.map((c) {
                         final name = c['user_name'] ?? '匿名用户';
+                        final avatar = c['user_avatar'] as String?;
                         final content = c['content'] ?? '';
                         final ts = c['created_at'] as int? ?? 0;
                         final dt =
@@ -489,6 +491,15 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
                             '${dt.month}/${dt.day} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
                         return ListTile(
                           dense: true,
+                          leading: CircleAvatar(
+                            backgroundColor: Colors.grey[200],
+                            backgroundImage: avatar != null && avatar.isNotEmpty
+                                ? CachedNetworkImageProvider(avatar)
+                                : null,
+                            child: (avatar == null || avatar.isEmpty)
+                                ? const Icon(Icons.person, color: Colors.grey)
+                                : null,
+                          ),
                           title: Text(name,
                               style: const TextStyle(
                                   fontWeight: FontWeight.w500)),

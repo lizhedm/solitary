@@ -22,7 +22,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 12,
+      version: 13,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -167,6 +167,9 @@ class DatabaseHelper {
     if (oldVersion < 12) {
       await _createFeedbackCommentsTable(db);
     }
+    if (oldVersion < 13) {
+      try { await db.execute('ALTER TABLE feedback_comments ADD COLUMN user_avatar TEXT'); } catch (_) {}
+    }
   }
   
   Future<void> _createMessageTables(Database db) async {
@@ -239,6 +242,7 @@ class DatabaseHelper {
         feedback_id INTEGER,
         user_id INTEGER,
         user_name TEXT,
+        user_avatar TEXT,
         content TEXT,
         created_at INTEGER
       )
