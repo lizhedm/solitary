@@ -346,31 +346,47 @@ class _HikingMapPageState extends State<HikingMapPage>
     debugPrint('Starting initialization...');
 
     try {
-      // 请求位置权限
-      var status = await Permission.location.request();
-      debugPrint('Location permission request result: $status');
-      
-      // On iOS, if user grants "When In Use" but we requested "Always" (via Permission.location),
-      // status might not be granted. Check specifically.
-      if (!status.isGranted && !status.isLimited) {
-         final status2 = await Permission.locationWhenInUse.status;
-         if (status2.isGranted || status2.isLimited) {
-            status = status2;
-         }
-      }
-
-      if ((status.isGranted || status.isLimited) && mounted) {
-        _initLocation();
-      } else {
-        // 权限被拒绝，显示提示
+      // 1. 检查定位服务是否开启
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
         if (mounted) {
           setState(() {
-            _errorMessage = '需要位置权限才能使用地图功能';
+            _errorMessage = '定位服务未开启，请在系统设置中打开定位服务';
+            _isInitializing = false;
           });
         }
+        return;
       }
+
+      // 2. 检查和请求定位权限
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied || 
+          permission == LocationPermission.deniedForever) {
+        if (mounted) {
+          setState(() {
+            _errorMessage = '需要位置权限才能使用地图功能，请在设置中允许定位';
+            _isInitializing = false;
+          });
+        }
+        return;
+      }
+
+      // 权限和定位服务都正常，初始化定位
+      if (mounted) {
+        _initLocation();
+      }
+
     } catch (e) {
       debugPrint('Permission error: $e');
+      if (mounted) {
+        setState(() {
+          _errorMessage = '初始化定位失败: $e';
+        });
+      }
     }
 
     if (mounted) {
@@ -390,6 +406,9 @@ class _HikingMapPageState extends State<HikingMapPage>
         debugPrint('Location service not enabled');
         return;
       }
+
+      // 尝试主动获取一次位置
+      _getLocationWithGeolocator();
 
       // 不再启动 Geolocator 位置更新流，依赖高德地图的定位回调
       // 保留 _locationSubscription 为 null
@@ -501,61 +520,66 @@ class _HikingMapPageState extends State<HikingMapPage>
   Future<void> _locateToCurrentPosition() async {
     debugPrint('Location button pressed');
 
-    // 1. Check/Request Permission
-    // Check both location (group) and specific whenInUse to handle iOS nuances
-    var status = await Permission.location.status;
-    if (!status.isGranted && !status.isLimited) {
-      status = await Permission.locationWhenInUse.status;
-    }
-    
-    if (!status.isGranted && !status.isLimited) {
-      // Try requesting
-      status = await Permission.location.request();
-      
-      // If still not granted, check if it's because we only got WhenInUse (which is fine for this)
-      if (!status.isGranted && !status.isLimited) {
-         status = await Permission.locationWhenInUse.status;
-      }
-
-      if (!status.isGranted && !status.isLimited) {
+    try {
+      // 1. 检查定位服务
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
         if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('需要位置权限才能定位')));
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('定位服务未开启，请在系统设置中打开')),
+          );
         }
         return;
       }
-    }
-    
-    // 2. Check Service Status (Optional, sometimes Geolocator check fails on iOS even if enabled)
-    // We can skip strict Geolocator service check if we trust AMap or want to avoid false negatives.
-    // However, checking enabled is good practice. 
-    // On iOS, sometimes isLocationServiceEnabled returns false if permission is not determined yet?
-    // Let's rely on AMap callbacks mostly, but basic check is fine.
-    
-    // 3. Check if we already have a valid position from AMap callback
-    if (_position != null && _isValidCoordinate(_position!)) {
-      _amapController?.moveCamera(CameraUpdate.newLatLngZoom(_position!, 17));
-      _addAvatarMarker(_position!);
-      return;
-    }
 
-    // 4. If no position yet, set flag to center on next update
-    setState(() {
-      _centerOnNextLocation = true;
-    });
+      // 2. 检查权限
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
 
-    // 5. Force AMap to locate? AMap usually auto-locates if myLocationEnabled is true.
-    // But we can also try Geolocator as fallback/accelerator
-    _getLocationWithGeolocator();
+      if (permission == LocationPermission.denied || 
+          permission == LocationPermission.deniedForever) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('需要位置权限才能定位')),
+          );
+        }
+        return;
+      }
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('正在定位...'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      // 3. 如果已有有效位置，直接移动镜头
+      if (_position != null && _isValidCoordinate(_position!)) {
+        _amapController?.moveCamera(CameraUpdate.newLatLngZoom(_position!, 17));
+        _addAvatarMarker(_position!);
+        // 同时触发一次后台定位以刷新
+        _getLocationWithGeolocator();
+        return;
+      }
+
+      // 4. 如果没有位置，设置标志并强制定位
+      setState(() {
+        _centerOnNextLocation = true;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('正在定位...'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+
+      _getLocationWithGeolocator();
+
+    } catch (e) {
+      debugPrint('Locate button error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('定位异常: $e')),
+        );
+      }
     }
   }
 
@@ -563,46 +587,91 @@ class _HikingMapPageState extends State<HikingMapPage>
   Future<void> _getLocationWithGeolocator() async {
     try {
       debugPrint('使用geolocator获取位置...');
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          distanceFilter: 10,
-        ),
-      ).timeout(const Duration(seconds: 5));
+      Position? position;
+      
+      // 1. 优先获取最后已知位置，以便实现“秒定”
+      try {
+        position = await Geolocator.getLastKnownPosition();
+        if (position != null) {
+          final latLng = LatLng(position.latitude, position.longitude);
+          if (_isValidCoordinate(latLng)) {
+            if (mounted) {
+              setState(() {
+                _position = latLng;
+              });
+              if (_centerOnNextLocation || !_hasCenteredToLocation) {
+                _hasCenteredToLocation = true;
+                _amapController?.moveCamera(CameraUpdate.newLatLngZoom(latLng, 17));
+              }
+              _addAvatarMarker(latLng);
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('获取最后已知位置失败: $e');
+      }
+
+      // 2. 获取当前最新精确位置
+      try {
+        // 注意：单次获取位置不要设置 distanceFilter，否则在某些设备上可能会一直等待移动
+        position = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+          ),
+        ).timeout(const Duration(seconds: 10));
+      } catch (e) {
+        debugPrint('获取当前位置超时或失败: $e');
+        // 如果已经有缓存位置，就不再抛出异常，直接使用缓存位置
+        if (position != null) {
+          return;
+        }
+        throw e;
+      }
+
+      if (position == null) {
+        debugPrint('无法获取任何位置信息');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('无法获取位置，请检查GPS信号或系统设置')),
+          );
+        }
+        return;
+      }
 
       final latLng = LatLng(position.latitude, position.longitude);
-      debugPrint('geolocator定位: ${latLng.latitude}, ${latLng.longitude}');
+      debugPrint('geolocator精确定位: ${latLng.latitude}, ${latLng.longitude}');
 
       if (!_isValidCoordinate(latLng)) {
         debugPrint('geolocator返回无效坐标');
         return;
       }
 
-      // 更新位置
+      // 更新精确位置
       if (mounted) {
         setState(() {
           _position = latLng;
         });
-      }
 
-      // 移动地图到当前位置
-      _amapController?.moveCamera(CameraUpdate.newLatLngZoom(latLng, 17));
-
-      // 添加头像标记
-      _addAvatarMarker(latLng);
-
-      // 如果之前设置了等待标志，清除它
-      if (_centerOnNextLocation) {
-        setState(() {
+        if (_centerOnNextLocation || !_hasCenteredToLocation) {
+          _hasCenteredToLocation = true;
+          _amapController?.moveCamera(CameraUpdate.newLatLngZoom(latLng, 17));
           _centerOnNextLocation = false;
-        });
+        }
+
+        // 添加头像标记
+        _addAvatarMarker(latLng);
       }
     } catch (e) {
       debugPrint('geolocator定位失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('定位失败: $e')));
+        ).showSnackBar(SnackBar(content: Text('定位异常: 无法获取到有效的GPS信号')));
+        
+        // 确保清除等待定位的标志
+        setState(() {
+          _centerOnNextLocation = false;
+        });
       }
     }
   }
@@ -1628,8 +1697,8 @@ class _HikingMapPageState extends State<HikingMapPage>
   // 生成「图标 + 文字」标签形式的路况标记
   Future<Uint8List> _createFeedbackLabelMarkerBytes(
       String label, Color color, IconData icon) async {
-    const width = 160;
-    const height = 64;
+    const width = 110;
+    const height = 48;
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     final rect = RRect.fromLTRBR(
@@ -1648,7 +1717,7 @@ class _HikingMapPageState extends State<HikingMapPage>
       text: TextSpan(
         text: String.fromCharCode(icon.codePoint),
         style: TextStyle(
-          fontSize: 24,
+          fontSize: 20,
           fontFamily: icon.fontFamily,
           package: icon.fontPackage,
           color: Colors.white,
@@ -1657,16 +1726,13 @@ class _HikingMapPageState extends State<HikingMapPage>
       textDirection: TextDirection.ltr,
     );
     iconPainter.layout();
-    const iconLeft = 12.0;
-    final iconTop = (height - iconPainter.height) / 2;
-    iconPainter.paint(canvas, Offset(iconLeft, iconTop));
 
     // 文字
     final textPainter = TextPainter(
       text: TextSpan(
         text: label,
         style: const TextStyle(
-          fontSize: 22,
+          fontSize: 18,
           fontWeight: FontWeight.w600,
           color: Colors.white,
         ),
@@ -1675,8 +1741,17 @@ class _HikingMapPageState extends State<HikingMapPage>
       textDirection: TextDirection.ltr,
       ellipsis: '…',
     );
-    textPainter.layout(maxWidth: width - 56);
-    final textLeft = 44.0;
+    // 留点边距
+    textPainter.layout(maxWidth: width - iconPainter.width - 8);
+
+    // 居中计算
+    final totalContentWidth = iconPainter.width + 4 + textPainter.width;
+    final startX = (width - totalContentWidth) / 2;
+
+    final iconTop = (height - iconPainter.height) / 2;
+    iconPainter.paint(canvas, Offset(startX, iconTop));
+
+    final textLeft = startX + iconPainter.width + 4;
     final textTop = (height - textPainter.height) / 2;
     textPainter.paint(canvas, Offset(textLeft, textTop));
 
@@ -1716,7 +1791,12 @@ class _HikingMapPageState extends State<HikingMapPage>
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) => Container(
-        margin: const EdgeInsets.all(16),
+        margin: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          bottom: MediaQuery.of(context).padding.bottom + 24, // 增加底部安全区距离
+          top: 16,
+        ),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
@@ -1737,20 +1817,19 @@ class _HikingMapPageState extends State<HikingMapPage>
                 );
               },
               child: Padding(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.fromLTRB(16, 16, 8, 24), // 增加内边距，特别是底部边距
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(8),
+                      padding: const EdgeInsets.all(10), // 稍微调大图标背景
                       decoration: BoxDecoration(
                         color: color.withOpacity(0.1),
                         shape: BoxShape.circle,
                       ),
-                      child: Icon(icon, color: color),
+                      child: Icon(icon, color: color, size: 28), // 稍微调大图标
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1759,7 +1838,7 @@ class _HikingMapPageState extends State<HikingMapPage>
                             children: [
                               Container(
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 2),
+                                    horizontal: 8, vertical: 4), // 稍微调大标签内边距
                                 decoration: BoxDecoration(
                                   color: color,
                                   borderRadius: BorderRadius.circular(12),
@@ -1773,13 +1852,16 @@ class _HikingMapPageState extends State<HikingMapPage>
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: 8),
+                              const SizedBox(width: 12),
                               OutlinedButton(
                                 style: OutlinedButton.styleFrom(
-                                  minimumSize: const Size(0, 28),
+                                  minimumSize: const Size(0, 32), // 稍微调高按钮
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 8),
+                                      horizontal: 12),
                                   side: BorderSide(color: color),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
                                 ),
                                 onPressed: () {
                                   Navigator.pop(context);
@@ -1792,27 +1874,35 @@ class _HikingMapPageState extends State<HikingMapPage>
                                     ),
                                   );
                                 },
-                                child: const Text(
+                                child: Text(
                                   '查看详情',
                                   style: TextStyle(
                                     fontSize: 12,
+                                    color: color, // 按钮文字颜色与主题一致
                                   ),
                                 ),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 8),
+                          const SizedBox(height: 12), // 增加标题与内容的间距
                           Text(
                             data['content'] ?? data['message'] ?? '无内容',
                             maxLines: 4,
                             overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              height: 1.4, // 增加行高，提升阅读体验
+                              color: Colors.black87,
+                            ),
                           ),
                         ],
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.close),
+                      icon: const Icon(Icons.close, color: Colors.grey),
                       onPressed: () => Navigator.pop(context),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
                     ),
                   ],
                 ),

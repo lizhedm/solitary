@@ -331,11 +331,38 @@ class HistoryDetailPage extends StatefulWidget {
 class _HistoryDetailPageState extends State<HistoryDetailPage> {
   bool _showReplay = false;
   bool _isSimulator = false;
+  int _feedbackCount = 0;
 
   @override
   void initState() {
     super.initState();
     _checkDevice();
+    _loadFeedbackCount();
+  }
+
+  Future<void> _loadFeedbackCount() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final userId = authProvider.user?.id;
+    if (userId == null) return;
+
+    try {
+      final startTs = widget.record.startTime.millisecondsSinceEpoch;
+      final endTs = widget.record.endTime.millisecondsSinceEpoch;
+
+      final allFeedbacks = await DatabaseHelper().getFeedbacks(userId);
+      final filtered = allFeedbacks.where((f) {
+        final createdAt = f['created_at'] as int? ?? 0;
+        return createdAt >= startTs && createdAt <= endTs;
+      }).toList();
+
+      if (mounted) {
+        setState(() {
+          _feedbackCount = filtered.length;
+        });
+      }
+    } catch (e) {
+      debugPrint('Load feedback count failed: $e');
+    }
   }
 
   Future<void> _checkDevice() async {
@@ -471,7 +498,7 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
                       title: const Text('查看临时会话'),
                       subtitle: Text('${record.messageCount} 条消息'),
                       trailing: const Icon(Icons.chevron_right),
-                        onTap: () {
+                      onTap: () {
                         // Pass record id and time range
                         final recordId = int.tryParse(record.id) ?? 0;
                         Navigator.push(
@@ -497,6 +524,7 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
                         child: const Icon(Icons.rate_review, color: Colors.orange),
                       ),
                       title: const Text('查看发布的路况'),
+                      subtitle: Text('$_feedbackCount 条路况'),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () {
                         Navigator.push(
