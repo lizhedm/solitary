@@ -2017,6 +2017,18 @@ class _HikingMapPageState extends State<HikingMapPage>
 
           // 在本地创建“进行中的徒步记录”（end_time 为空），用于临时会话按本次徒步时间段过滤
           WidgetsBinding.instance.addPostFrameCallback((_) async {
+            // 定位并移动地图到当前位置
+            if (_position != null && _amapController != null) {
+              _amapController!.moveCamera(
+                CameraUpdate.newCameraPosition(
+                  CameraPosition(
+                    target: _position!,
+                    zoom: 16.0,
+                  ),
+                ),
+              );
+            }
+
             final authProvider = Provider.of<AuthProvider>(context, listen: false);
             final userId = authProvider.user?.id ?? 0;
             if (userId == 0) return;
@@ -2032,6 +2044,8 @@ class _HikingMapPageState extends State<HikingMapPage>
                 'elevation_gain': 0,
                 'start_location': 'Unknown',
                 'end_location': 'Unknown',
+                'start_latitude': _position?.latitude,
+                'start_longitude': _position?.longitude,
                 'map_snapshot_url': null,
                 'coordinates_json': null,
                 'message_count': 0,
@@ -2211,6 +2225,10 @@ class _HikingMapPageState extends State<HikingMapPage>
         elevationGain: _elevationGain,
         startLocation: 'Unknown', 
         endLocation: 'Unknown',
+        startLatitude: _pathPoints.isNotEmpty ? _pathPoints.first.latitude : _position?.latitude,
+        startLongitude: _pathPoints.isNotEmpty ? _pathPoints.first.longitude : _position?.longitude,
+        endLatitude: endPos.latitude,
+        endLongitude: endPos.longitude,
         mapSnapshotUrl: snapshotUrl,
         messageCount: 0, // 初始为0
         coordinatesJson: jsonEncode(_pathPoints.map((p) => {'lat': p.latitude, 'lng': p.longitude}).toList()),

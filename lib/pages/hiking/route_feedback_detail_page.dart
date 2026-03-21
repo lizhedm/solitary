@@ -492,12 +492,13 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
                         return ListTile(
                           dense: true,
                           leading: CircleAvatar(
+                            radius: 16,
                             backgroundColor: Colors.grey[200],
                             backgroundImage: avatar != null && avatar.isNotEmpty
                                 ? CachedNetworkImageProvider(avatar)
                                 : null,
                             child: (avatar == null || avatar.isEmpty)
-                                ? const Icon(Icons.person, color: Colors.grey)
+                                ? Icon(Icons.person, size: 18, color: Colors.grey[400])
                                 : null,
                           ),
                           title: Text(name,

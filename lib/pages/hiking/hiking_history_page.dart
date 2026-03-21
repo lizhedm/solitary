@@ -11,6 +11,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../utils/device_utils.dart';
 
 import '../../services/database_helper.dart';
+import 'history_feedbacks_page.dart';
 
 class HikingHistoryPage extends StatefulWidget {
   const HikingHistoryPage({super.key});
@@ -249,8 +250,8 @@ class _HikingHistoryPageState extends State<HikingHistoryPage> {
                                               const SizedBox(width: 4),
                                               Expanded(
                                                 child: Text(
-                                                  '${item.startLocation ?? "未知"} → ${item.endLocation ?? "未知"}',
-                                                  style: const TextStyle(color: Colors.grey),
+                                                  '${item.startLatitude?.toStringAsFixed(4) ?? "未知"},${item.startLongitude?.toStringAsFixed(4) ?? "未知"} → ${item.endLatitude?.toStringAsFixed(4) ?? "未知"},${item.endLongitude?.toStringAsFixed(4) ?? "未知"}',
+                                                  style: const TextStyle(color: Colors.grey, fontSize: 12),
                                                   overflow: TextOverflow.ellipsis,
                                                 ),
                                               ),
@@ -478,6 +479,30 @@ class _HistoryDetailPageState extends State<HistoryDetailPage> {
                           MaterialPageRoute(
                             builder: (context) => HistoryMessagesPage(
                               hikeId: recordId,
+                              startTime: record.startTime,
+                              endTime: record.endTime,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    const Divider(),
+                    ListTile(
+                      leading: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.rate_review, color: Colors.orange),
+                      ),
+                      title: const Text('查看发布的路况'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => HistoryFeedbacksPage(
                               startTime: record.startTime,
                               endTime: record.endTime,
                             ),

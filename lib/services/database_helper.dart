@@ -22,7 +22,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 13,
+      version: 14,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -68,6 +68,10 @@ class DatabaseHelper {
         elevation_gain INTEGER,
         start_location TEXT,
         end_location TEXT,
+        start_latitude REAL,
+        start_longitude REAL,
+        end_latitude REAL,
+        end_longitude REAL,
         map_snapshot_url TEXT,
         coordinates_json TEXT,
         message_count INTEGER DEFAULT 0,
@@ -169,6 +173,12 @@ class DatabaseHelper {
     }
     if (oldVersion < 13) {
       try { await db.execute('ALTER TABLE feedback_comments ADD COLUMN user_avatar TEXT'); } catch (_) {}
+    }
+    if (oldVersion < 14) {
+      try { await db.execute('ALTER TABLE hiking_records ADD COLUMN start_latitude REAL'); } catch (_) {}
+      try { await db.execute('ALTER TABLE hiking_records ADD COLUMN start_longitude REAL'); } catch (_) {}
+      try { await db.execute('ALTER TABLE hiking_records ADD COLUMN end_latitude REAL'); } catch (_) {}
+      try { await db.execute('ALTER TABLE hiking_records ADD COLUMN end_longitude REAL'); } catch (_) {}
     }
   }
   

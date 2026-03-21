@@ -17,6 +17,10 @@ class HikingRecord(Base):
     
     start_location = Column(String)
     end_location = Column(String)
+    start_latitude = Column(Float, nullable=True)
+    start_longitude = Column(Float, nullable=True)
+    end_latitude = Column(Float, nullable=True)
+    end_longitude = Column(Float, nullable=True)
     
     map_snapshot = Column(String, nullable=True)
     coordinates_json = Column(String, nullable=True) # JSON string of coordinates

@@ -24,6 +24,10 @@ class HikingRecordCreate(BaseModel):
     elevation_gain: int
     start_location: str | None = None
     end_location: str | None = None
+    start_latitude: float | None = None
+    start_longitude: float | None = None
+    end_latitude: float | None = None
+    end_longitude: float | None = None
     map_snapshot_url: str | None = None
     coordinates_json: str | None = None
     message_count: int = 0
@@ -295,6 +299,10 @@ def create_hiking_record(
         elevation_gain=record.elevation_gain,
         start_location=record.start_location,
         end_location=record.end_location,
+        start_latitude=record.start_latitude,
+        start_longitude=record.start_longitude,
+        end_latitude=record.end_latitude,
+        end_longitude=record.end_longitude,
         map_snapshot=record.map_snapshot_url,
         coordinates_json=record.coordinates_json,
         message_count=record.message_count,
@@ -343,6 +351,10 @@ def get_hiking_records(
             "elevation_gain": r.elevation_gain,
             "start_location": r.start_location,
             "end_location": r.end_location,
+            "start_latitude": r.start_latitude,
+            "start_longitude": r.start_longitude,
+            "end_latitude": r.end_latitude,
+            "end_longitude": r.end_longitude,
             "map_snapshot_url": r.map_snapshot, # Map DB field to frontend field
             "coordinates_json": r.coordinates_json,
             "message_count": r.message_count

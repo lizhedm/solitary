@@ -9,6 +9,10 @@ class HikingRecord {
   final int elevationGain; // m
   final String? startLocation;
   final String? endLocation;
+  final double? startLatitude;
+  final double? startLongitude;
+  final double? endLatitude;
+  final double? endLongitude;
   final String? mapSnapshotUrl;
   final int messageCount;
   
@@ -26,6 +30,10 @@ class HikingRecord {
     required this.elevationGain,
     this.startLocation,
     this.endLocation,
+    this.startLatitude,
+    this.startLongitude,
+    this.endLatitude,
+    this.endLongitude,
     this.mapSnapshotUrl,
     this.messageCount = 0,
     this.coordinatesJson,
@@ -43,6 +51,10 @@ class HikingRecord {
       elevationGain: json['elevation_gain'],
       startLocation: json['start_location'],
       endLocation: json['end_location'],
+      startLatitude: json['start_latitude'] != null ? (json['start_latitude'] as num).toDouble() : null,
+      startLongitude: json['start_longitude'] != null ? (json['start_longitude'] as num).toDouble() : null,
+      endLatitude: json['end_latitude'] != null ? (json['end_latitude'] as num).toDouble() : null,
+      endLongitude: json['end_longitude'] != null ? (json['end_longitude'] as num).toDouble() : null,
       mapSnapshotUrl: json['map_snapshot_url'],
       messageCount: json['message_count'] ?? 0,
       coordinatesJson: json['coordinates_json'],
@@ -61,6 +73,10 @@ class HikingRecord {
       'elevation_gain': elevationGain,
       'start_location': startLocation,
       'end_location': endLocation,
+      'start_latitude': startLatitude,
+      'start_longitude': startLongitude,
+      'end_latitude': endLatitude,
+      'end_longitude': endLongitude,
       'map_snapshot_url': mapSnapshotUrl,
       'message_count': messageCount,
       'coordinates_json': coordinatesJson,
@@ -78,6 +94,10 @@ class HikingRecord {
     int? elevationGain,
     String? startLocation,
     String? endLocation,
+    double? startLatitude,
+    double? startLongitude,
+    double? endLatitude,
+    double? endLongitude,
     String? mapSnapshotUrl,
     int? messageCount,
     String? coordinatesJson,
@@ -93,6 +113,10 @@ class HikingRecord {
       elevationGain: elevationGain ?? this.elevationGain,
       startLocation: startLocation ?? this.startLocation,
       endLocation: endLocation ?? this.endLocation,
+      startLatitude: startLatitude ?? this.startLatitude,
+      startLongitude: startLongitude ?? this.startLongitude,
+      endLatitude: endLatitude ?? this.endLatitude,
+      endLongitude: endLongitude ?? this.endLongitude,
       mapSnapshotUrl: mapSnapshotUrl ?? this.mapSnapshotUrl,
       messageCount: messageCount ?? this.messageCount,
       coordinatesJson: coordinatesJson ?? this.coordinatesJson,
