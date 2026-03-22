@@ -328,6 +328,9 @@ class _ChatPageState extends State<ChatPage> {
                     controller: _scrollController,
                     padding: const EdgeInsets.all(16),
                     itemCount: _messages.length,
+                    physics: const AlwaysScrollableScrollPhysics(
+                      parent: BouncingScrollPhysics(),
+                    ),
                     itemBuilder: (context, index) {
                       final msg = _messages[index];
                       final isMe = msg.senderId == currentUserId;

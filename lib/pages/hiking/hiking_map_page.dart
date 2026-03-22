@@ -79,12 +79,12 @@ class _HikingMapPageState extends State<HikingMapPage>
   // markers 状态，便于更新定位头像标记
   Set<Marker> _markers = <Marker>{};
 
-  // 定位小蓝点样式
+  // 定位小蓝点样式（完全透明，去掉高德默认的蓝色精度圈和定位点，依赖自定义头像）
   MyLocationStyleOptions _myLocationStyleOptions = MyLocationStyleOptions(
     true,
-    circleFillColor: const Color(0x332E7D32), // 半透明绿色
-    circleStrokeColor: const Color(0xFF2E7D32), // 绿色边框
-    circleStrokeWidth: 2.0,
+    circleFillColor: const Color(0x00000000), // 完全透明
+    circleStrokeColor: const Color(0x00000000), // 完全透明
+    circleStrokeWidth: 0.0,
   );
 
   // 是否在下一次定位更新时居中地图
@@ -676,40 +676,66 @@ class _HikingMapPageState extends State<HikingMapPage>
     }
   }
 
-  /// 生成头像 Marker 的 PNG bytes（圆形带文字首字母）
+  /// 生成头像 Marker 的 PNG bytes（圆形带文字首字母，含光晕阴影效果）
   Future<Uint8List> _createAvatarMarkerBytes(
     String label, {
-    int size = 128,
+    int size = 125,
     Color color = const Color(0xFF2E7D32),
   }) async {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     final double dSize = size.toDouble();
-
-    // 背景圆
-    final Paint bgPaint = Paint()..color = color;
     final Offset center = Offset(dSize / 2, dSize / 2);
-    canvas.drawCircle(center, dSize / 2, bgPaint);
 
-    // 白色内圈（边框效果）
-    final Paint borderPaint = Paint()..color = const ui.Color(0xFFFFFFFF);
-    canvas.drawCircle(center, dSize * 0.44, borderPaint);
+    // 头像内部半径
+    final double avatarRadius = dSize * 0.28; 
 
-    // 文本（首字母）
+    // 1) 绘制背景扩散光晕 (Glow Background) 
+    // 让它贴近白圈，比白圈大2个像素
+    final double glowRadius = avatarRadius + 25; 
+    final Paint glowPaint = Paint()
+      ..shader = ui.Gradient.radial(
+        center,
+        glowRadius,
+        [
+          color.withOpacity(0.8),
+          color.withOpacity(0.0)
+        ],
+        [0.0, 1.0],
+      );
+    canvas.drawCircle(center, glowRadius, glowPaint);
+
+    // 2) 头像底层黑色阴影 (增强立体感)
+    final Paint shadowPaint = Paint()
+      ..color = Colors.black.withOpacity(0.3)
+      ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 8.0);
+    canvas.drawCircle(Offset(center.dx, center.dy + 4), avatarRadius + 4, shadowPaint);
+
+    // 3) 内层加粗白色白边 (作为主体外框)
+    final Paint innerBorderPaint = Paint()
+      ..color = const ui.Color(0xFFFFFFFF)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 6.0;
+    canvas.drawCircle(center, avatarRadius + 3, innerBorderPaint);
+
+    // 4) 内部底色和文字首字母
+    final Paint bgPaint = Paint()..color = color;
+    canvas.drawCircle(center, avatarRadius, bgPaint);
+
     final ui.ParagraphStyle paragraphStyle = ui.ParagraphStyle(
       textAlign: ui.TextAlign.center,
       fontWeight: ui.FontWeight.bold,
     );
     final ui.TextStyle textStyle = ui.TextStyle(
-      color: color,
-      fontSize: dSize * 0.45,
+      color: const ui.Color(0xFFFFFFFF),
+      fontSize: avatarRadius * 1.2,
     );
     final ui.ParagraphBuilder pb = ui.ParagraphBuilder(paragraphStyle)
       ..pushStyle(textStyle)
       ..addText(label);
     final ui.Paragraph paragraph = pb.build()
       ..layout(ui.ParagraphConstraints(width: dSize));
-    // 将文本绘制到中心位置
+    
     final double textY = (dSize - paragraph.height) / 2;
     canvas.drawParagraph(paragraph, Offset(0, textY));
 
@@ -807,10 +833,10 @@ class _HikingMapPageState extends State<HikingMapPage>
     }
   }
 
-  /// 将图片字节转换为圆形标记图标的字节流（支持自定义边框颜色）
+  /// 将图片字节转换为圆形标记图标的字节流（增加发光阴影与精度圈效果）
   Future<Uint8List> _avatarCircleBytesFromBytes(
       Uint8List imageBytes, {
-      int size = 64, 
+      int size = 120, 
       Color borderColor = const Color(0xFF2E7D32)
   }) async {
     final Completer<ui.Image> completer = Completer();
@@ -819,39 +845,60 @@ class _HikingMapPageState extends State<HikingMapPage>
     });
     final ui.Image avatarImage = await completer.future;
 
-    final double centerX = size / 2.0;
-    final double centerY = size / 2.0;
+    final double dSize = size.toDouble();
+    final double centerX = dSize / 2.0;
+    final double centerY = dSize / 2.0;
     final Offset center = Offset(centerX, centerY);
 
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
 
-    // 1) 内部头像圆圈，带一个外部圆环
-    final ringPaint = Paint()
-      ..color = borderColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 4.0;
-    // 外环半径 slightly smaller than half size to fit stroke
-    final double radius = (size / 2.0) - 2.0;
-    canvas.drawCircle(Offset(centerX, centerY), radius, ringPaint);
+    // 头像内部半径
+    final double avatarRadius = dSize * 0.28;
 
-    // 2) 在同一画布内裁剪一个圆形区域，绘制头像
-    final double innerRadius = radius - 2.0;
+    // 1) 绘制背景扩散光晕 (Glow Background)
+    // 紧贴白圈外部发光，比白圈大2个像素
+    final double glowRadius = avatarRadius + 25;
+    final Paint glowPaint = Paint()
+      ..shader = ui.Gradient.radial(
+        center,
+        glowRadius,
+        [
+          borderColor.withOpacity(0.8),
+          borderColor.withOpacity(0.0)
+        ],
+        [0.0, 1.0],
+      );
+    canvas.drawCircle(center, glowRadius, glowPaint);
+
+    // 2) 头像底层黑色阴影
+    final Paint shadowPaint = Paint()
+      ..color = Colors.black.withOpacity(0.3)
+      ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 8.0);
+    canvas.drawCircle(Offset(centerX, centerY + 4), avatarRadius + 4, shadowPaint);
+
+    // 3) 内层加粗白色白边
+    final Paint innerBorderPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 6.0;
+    canvas.drawCircle(center, avatarRadius + 3, innerBorderPaint);
+
+    // 4) 裁剪并绘制图片本身
+    final double innerRadius = avatarRadius;
     final clipPath = Path()
       ..addOval(Rect.fromCircle(center: center, radius: innerRadius));
     canvas.clipPath(clipPath);
     
-    // Scale image to cover
-    // Calculate scale to cover the circle
+    // 居中裁剪图像
     final double scale = math.max(
-        (size.toDouble()) / avatarImage.width,
-        (size.toDouble()) / avatarImage.height
+        (innerRadius * 2) / avatarImage.width,
+        (innerRadius * 2) / avatarImage.height
     );
     
     final double scaledWidth = avatarImage.width * scale;
     final double scaledHeight = avatarImage.height * scale;
     
-    // Center crop
     final Rect src = Rect.fromLTWH(0, 0, avatarImage.width.toDouble(), avatarImage.height.toDouble());
     final Rect dst = Rect.fromLTWH(
         centerX - scaledWidth / 2, 
