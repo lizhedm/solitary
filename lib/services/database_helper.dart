@@ -22,7 +22,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 14,
+      version: 16,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -180,6 +180,13 @@ class DatabaseHelper {
       try { await db.execute('ALTER TABLE hiking_records ADD COLUMN end_latitude REAL'); } catch (_) {}
       try { await db.execute('ALTER TABLE hiking_records ADD COLUMN end_longitude REAL'); } catch (_) {}
     }
+    if (oldVersion < 15) {
+      try { await db.execute('ALTER TABLE contacts ADD COLUMN owner_id INTEGER DEFAULT 0'); } catch (_) {}
+    }
+    if (oldVersion < 16) {
+      // Create new index for faster range queries on messages if needed
+      try { await db.execute('CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)'); } catch (_) {}
+    }
   }
   
   Future<void> _createMessageTables(Database db) async {
@@ -207,7 +214,8 @@ class DatabaseHelper {
         id INTEGER PRIMARY KEY, 
         nickname TEXT,
         avatar TEXT,
-        updated_at INTEGER
+        updated_at INTEGER,
+        owner_id INTEGER DEFAULT 0
       )
     ''');
   }
@@ -567,23 +575,25 @@ class DatabaseHelper {
     );
   }
 
-  Future<void> saveContact(Map<String, dynamic> contact) async {
+  Future<void> saveContact(Map<String, dynamic> contact, {int ownerId = 0}) async {
     final db = await database;
+    final data = Map<String, dynamic>.from(contact);
+    data['owner_id'] = ownerId;
     await db.insert(
       'contacts',
-      contact,
+      data,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
   
-  Future<List<Map<String, dynamic>>> getContacts() async {
+  Future<List<Map<String, dynamic>>> getContacts(int ownerId) async {
     final db = await database;
-    return await db.query('contacts');
+    return await db.query('contacts', where: 'owner_id = ?', whereArgs: [ownerId]);
   }
   
-  Future<Map<String, dynamic>?> getContact(int id) async {
+  Future<Map<String, dynamic>?> getContact(int id, {int ownerId = 0}) async {
     final db = await database;
-    final res = await db.query('contacts', where: 'id = ?', whereArgs: [id]);
+    final res = await db.query('contacts', where: 'id = ? AND owner_id = ?', whereArgs: [id, ownerId]);
     return res.isNotEmpty ? res.first : null;
   }
   

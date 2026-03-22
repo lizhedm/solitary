@@ -7,7 +7,6 @@ import 'dart:convert';
 import 'dart:async';
 import '../../services/database_helper.dart';
 import 'chat_page.dart';
-import 'question_replies_page.dart';
 import '../hiking/route_feedback_detail_page.dart';
 import '../hiking/feedback_list_widget.dart';
 import 'sos_event_detail_page.dart';
@@ -228,7 +227,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
       String name = '用户 $partnerId';
       String avatar = '';
 
-      var contact = await DatabaseHelper().getContact(partnerId);
+      var contact = await DatabaseHelper().getContact(partnerId, ownerId: currentUserId);
       if (contact != null) {
         name = contact['nickname'] ?? name;
         avatar = contact['avatar'] ?? avatar;
@@ -271,7 +270,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
       String name = partnerId == 0 ? '所有人 (SOS广播)' : '用户 $partnerId';
       String avatar = '';
       if (partnerId != 0) {
-        var contact = await DatabaseHelper().getContact(partnerId);
+        var contact = await DatabaseHelper().getContact(partnerId, ownerId: currentUserId);
         if (contact != null) {
           name = contact['nickname'] ?? name;
           avatar = contact['avatar'] ?? avatar;
@@ -302,7 +301,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
         'partner_id': partnerId,
         'partner_name': name,
         'partner_avatar': avatar,
-        'content': '[SOS求救] 收到他的求救信号',
+        'content': '收到他的求救信号',
         'timestamp': msg['timestamp'],
         'danger_label': dangerLabel,
         'safety_status': safetyStatus,
@@ -648,7 +647,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                  String avatar = '';
                  
                  if (partnerId != 0) {
-                   var contact = await DatabaseHelper().getContact(partnerId);
+                   var contact = await DatabaseHelper().getContact(partnerId, ownerId: currentUserId);
                    if (contact != null) {
                       name = contact['nickname'] ?? name;
                       avatar = contact['avatar'] ?? avatar;
@@ -671,9 +670,9 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                  // Format content for display
                  if (type == 'sos') {
                     if (senderId == currentUserId) {
-                      content = partnerId == 0 ? '[SOS求救] 我已发出求救广播' : '[SOS求救] 我向他发出了求救';
+                      content = partnerId == 0 ? '我已发出求救广播' : '我向他发出了求救';
                     } else {
-                      content = '[SOS求救] 收到他的求救信号';
+                      content = '收到他的求救信号';
                     }
                  } else if (type == 'question') {
                     content = '收到提问: $content';
@@ -737,16 +736,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                       ),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => QuestionRepliesPage(
-                              question: item['content'],
-                              recipientCount: recipientCount,
-                              recipientIds: (item['recipients'] as List).cast<int>(),
-                            ),
-                          ),
-                        );
+                        // Old code replaced
                       },
                     ),
                   );
@@ -882,41 +872,9 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                       ),
                     ),
                     ...myQuestions.map((item) {
-                      final recipientCount =
-                          (item['recipients'] as List).length;
-                      return Card(
-                        margin: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 8),
-                        color: Colors.blue.shade50,
-                        child: ListTile(
-                          leading: const CircleAvatar(
-                            backgroundColor: Colors.blue,
-                            child: Icon(Icons.help, color: Colors.white),
-                          ),
-                          title: Text(
-                            item['content'],
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: Text(
-                            '发送给 $recipientCount 位用户 • ${_formatTime(item['timestamp'])}',
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => QuestionRepliesPage(
-                                  question: item['content'],
-                                  recipientCount: recipientCount,
-                                  recipientIds:
-                                      (item['recipients'] as List).cast<int>(),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
+                      return _MyQuestionCard(
+                        item: item,
+                        formatTime: _formatTime,
                       );
                     }),
                   ],
@@ -997,71 +955,9 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                       ),
                     ),
                     ...mySos.map((event) {
-                      String dangerLabel = '未知危险';
-                      int safetyStatus = 0;
-                      List urgentLabels = [];
-                      int createdAt = event['created_at'] as int? ?? 0;
-                      int recipientCount = 0;
-
-                      try {
-                        final msg = jsonDecode(event['message_json'] ?? '{}');
-                        dangerLabel = msg['danger_label'] ?? dangerLabel;
-                        safetyStatus = msg['safety_status'] ?? safetyStatus;
-                        urgentLabels = (msg['urgent_labels'] as List?) ?? [];
-                      } catch (_) {}
-
-                      try {
-                        final recipients = jsonDecode(event['recipients_json'] ?? '[]') as List;
-                        recipientCount = recipients.length;
-                      } catch (_) {}
-
-                      final statusText = safetyStatus == 2
-                          ? '已脱险'
-                          : (safetyStatus == 1 ? '暂时安全' : '仍危险');
-                      final statusColor = safetyStatus == 2
-                          ? Colors.green
-                          : (safetyStatus == 1 ? Colors.orange : Colors.red);
-
-                      return Card(
-                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        color: Colors.red.shade50,
-                        shape: RoundedRectangleBorder(
-                          side: BorderSide(color: Colors.red.shade200, width: 1),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor: Colors.red.shade100,
-                            child: const Icon(Icons.warning_amber_rounded, color: Colors.red),
-                          ),
-                          title: Text(
-                            '已发送给 $recipientCount 位用户',
-                            style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
-                          ),
-                          subtitle: Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: Wrap(
-                              spacing: 6,
-                              runSpacing: 6,
-                              children: [
-                                _miniTag(Icons.report, dangerLabel, Colors.red.shade700),
-                                _miniTag(Icons.shield, statusText, statusColor),
-                                if (urgentLabels.isNotEmpty)
-                                  _miniTag(Icons.inventory_2, urgentLabels.join('、'), Colors.deepOrange),
-                                _miniTag(Icons.access_time, _formatTime(createdAt), Colors.grey),
-                              ],
-                            ),
-                          ),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => SOSEventDetailPage(event: Map<String, dynamic>.from(event)),
-                              ),
-                            );
-                          },
-                        ),
+                      return _MySosCard(
+                        event: event,
+                        formatTime: _formatTime,
                       );
                     }),
                   ],
@@ -1141,11 +1037,12 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                                     _miniTag(Icons.shield, statusText, statusColor),
                                     if (urgentLabels.isNotEmpty)
                                       _miniTag(Icons.inventory_2, urgentLabels.join('、'), Colors.deepOrange),
+                                    _miniTag(Icons.access_time, _formatTime(item['timestamp']), Colors.grey),
                                   ],
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  '来自 $partnerName • ${_formatTime(item['timestamp'])}',
+                                  '来自 $partnerName',
                                   style: const TextStyle(fontSize: 12),
                                 ),
                               ],
@@ -1191,6 +1088,424 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
           onRefresh: () => provider.fetchMyFeedbacks(userId, forceRefresh: true),
         );
       },
+    );
+  }
+}
+
+class _MySosCard extends StatefulWidget {
+  final Map<String, dynamic> event;
+  final String Function(int) formatTime;
+
+  const _MySosCard({Key? key, required this.event, required this.formatTime}) : super(key: key);
+
+  @override
+  State<_MySosCard> createState() => _MySosCardState();
+}
+
+class _MySosCardState extends State<_MySosCard> {
+  bool _isExpanded = false;
+
+  Future<Map<String, dynamic>> _getUserInfo(int partnerId, int currentUserId) async {
+    var contact = await DatabaseHelper().getContact(partnerId, ownerId: currentUserId);
+    if (contact != null) {
+      return contact;
+    }
+    try {
+      final response = await ApiService().get('/users/$partnerId');
+      if (response.statusCode == 200 && response.data != null) {
+        return {
+          'nickname': response.data['nickname'] ?? '用户 $partnerId',
+          'avatar': response.data['avatar'] ?? '',
+        };
+      }
+    } catch (e) {
+      // Ignore
+    }
+    return {
+      'nickname': '用户 $partnerId',
+      'avatar': '',
+    };
+  }
+
+  Widget _miniTag(IconData icon, String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withOpacity(0.25)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            text,
+            style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    String dangerLabel = '未知危险';
+    int safetyStatus = 0;
+    List urgentLabels = [];
+    int createdAt = widget.event['created_at'] as int? ?? 0;
+    List recipients = [];
+    int recipientCount = 0;
+
+    try {
+      final msg = jsonDecode(widget.event['message_json'] ?? '{}');
+      dangerLabel = msg['danger_label'] ?? dangerLabel;
+      safetyStatus = msg['safety_status'] ?? safetyStatus;
+      urgentLabels = (msg['urgent_labels'] as List?) ?? [];
+    } catch (_) {}
+
+    try {
+      recipients = jsonDecode(widget.event['recipients_json'] ?? '[]') as List;
+      recipientCount = recipients.length;
+    } catch (_) {}
+
+    final statusText = safetyStatus == 2
+        ? '已脱险'
+        : (safetyStatus == 1 ? '暂时安全' : '仍危险');
+    final statusColor = safetyStatus == 2
+        ? Colors.green
+        : (safetyStatus == 1 ? Colors.orange : Colors.red);
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: Colors.red.shade50,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: Colors.red.shade200, width: 1),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          ListTile(
+            leading: CircleAvatar(
+              backgroundColor: Colors.red.shade100,
+              child: const Icon(Icons.warning_amber_rounded, color: Colors.red),
+            ),
+            title: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '已发送给 $recipientCount 位用户',
+                  style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                ),
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _isExpanded = !_isExpanded;
+                    });
+                  },
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: const Size(0, 0),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _isExpanded ? '收起会话' : '展开会话',
+                        style: const TextStyle(fontSize: 12, color: Colors.blue),
+                      ),
+                      Icon(
+                        _isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                        size: 16,
+                        color: Colors.blue,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  _miniTag(Icons.report, dangerLabel, Colors.red.shade700),
+                  _miniTag(Icons.shield, statusText, statusColor),
+                  if (urgentLabels.isNotEmpty)
+                    _miniTag(Icons.inventory_2, urgentLabels.join('、'), Colors.deepOrange),
+                  _miniTag(Icons.access_time, widget.formatTime(createdAt), Colors.grey),
+                ],
+              ),
+            ),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => SOSEventDetailPage(event: Map<String, dynamic>.from(widget.event)),
+                ),
+              );
+            },
+          ),
+          AnimatedCrossFade(
+            firstChild: const SizedBox(width: double.infinity, height: 0),
+            secondChild: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border(top: BorderSide(color: Colors.red.shade100)),
+              ),
+              child: Column(
+                children: recipients.map((partnerItem) {
+                  int partnerId;
+                  if (partnerItem is int) {
+                    partnerId = partnerItem;
+                  } else if (partnerItem is Map) {
+                    partnerId = partnerItem['id'] as int? ?? 0;
+                  } else {
+                    partnerId = int.tryParse(partnerItem.toString()) ?? 0;
+                  }
+                  
+                  if (partnerId == 0) return const SizedBox.shrink();
+
+                  return FutureBuilder<Map<String, dynamic>?>(
+                    future: _getUserInfo(partnerId, Provider.of<AuthProvider>(context, listen: false).user?.id ?? 0),
+                    builder: (context, snapshot) {
+                      String name = '用户 $partnerId';
+                      String avatar = '';
+                      if (snapshot.hasData && snapshot.data != null) {
+                        name = snapshot.data!['nickname'] ?? name;
+                        avatar = snapshot.data!['avatar'] ?? '';
+                      }
+                      return ListTile(
+                        dense: true,
+                        leading: (avatar.isNotEmpty)
+                            ? CircleAvatar(
+                                radius: 16,
+                                backgroundImage: CachedNetworkImageProvider(
+                                  avatar.startsWith('http')
+                                      ? avatar
+                                      : 'http://8.136.205.255:8000$avatar',
+                                ),
+                              )
+                            : CircleAvatar(
+                                radius: 16,
+                                backgroundColor: Colors.orange.shade100,
+                                child: Text(
+                                  name.substring(0, 1),
+                                  style: const TextStyle(color: Colors.orange, fontSize: 12),
+                                ),
+                              ),
+                        title: Text(name, style: const TextStyle(fontSize: 14)),
+                        trailing: const Icon(Icons.chat, size: 16, color: Colors.grey),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => ChatPage(
+                                title: name,
+                                avatar: avatar,
+                                partnerId: partnerId,
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  );
+                }).toList(),
+              ),
+            ),
+            crossFadeState: _isExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+            duration: const Duration(milliseconds: 300),
+            sizeCurve: Curves.easeInOut,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MyQuestionCard extends StatefulWidget {
+  final Map<String, dynamic> item;
+  final String Function(int) formatTime;
+
+  const _MyQuestionCard({Key? key, required this.item, required this.formatTime}) : super(key: key);
+
+  @override
+  State<_MyQuestionCard> createState() => _MyQuestionCardState();
+}
+
+class _MyQuestionCardState extends State<_MyQuestionCard> {
+  bool _isExpanded = false;
+
+  Future<Map<String, dynamic>> _getUserInfo(int partnerId, int currentUserId) async {
+    var contact = await DatabaseHelper().getContact(partnerId, ownerId: currentUserId);
+    if (contact != null) {
+      return contact;
+    }
+    try {
+      final response = await ApiService().get('/users/$partnerId');
+      if (response.statusCode == 200 && response.data != null) {
+        return {
+          'nickname': response.data['nickname'] ?? '用户 $partnerId',
+          'avatar': response.data['avatar'] ?? '',
+        };
+      }
+    } catch (e) {
+      // Ignore
+    }
+    return {
+      'nickname': '用户 $partnerId',
+      'avatar': '',
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final recipients = widget.item['recipients'] as List? ?? [];
+    final recipientCount = recipients.length;
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: Colors.blue.shade50,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: Colors.blue.shade200, width: 1),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          ListTile(
+            leading: const CircleAvatar(
+              backgroundColor: Colors.blue,
+              child: Icon(Icons.help, color: Colors.white),
+            ),
+            title: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    widget.item['content'],
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                TextButton(
+                    onPressed: () {
+                      setState(() {
+                        _isExpanded = !_isExpanded;
+                      });
+                    },
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: const Size(0, 0),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _isExpanded ? '收起会话' : '展开会话',
+                          style: const TextStyle(fontSize: 12, color: Colors.blue),
+                        ),
+                        Icon(
+                          _isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                          size: 16,
+                          color: Colors.blue,
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            subtitle: Text(
+              '发送给 $recipientCount 位用户 • ${widget.formatTime(widget.item['timestamp'])}',
+              style: const TextStyle(fontSize: 12),
+            ),
+            onTap: () {
+              setState(() {
+                _isExpanded = !_isExpanded;
+              });
+            },
+          ),
+          AnimatedCrossFade(
+            firstChild: const SizedBox(width: double.infinity, height: 0),
+            secondChild: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border(top: BorderSide(color: Colors.blue.shade100)),
+              ),
+              child: Column(
+                children: recipients.map((partnerItem) {
+                  int partnerId;
+                  if (partnerItem is int) {
+                    partnerId = partnerItem;
+                  } else if (partnerItem is Map) {
+                    partnerId = partnerItem['id'] as int? ?? 0;
+                  } else {
+                    partnerId = int.tryParse(partnerItem.toString()) ?? 0;
+                  }
+                  
+                  if (partnerId == 0) return const SizedBox.shrink();
+
+                  return FutureBuilder<Map<String, dynamic>?>(
+                    future: _getUserInfo(partnerId, Provider.of<AuthProvider>(context, listen: false).user?.id ?? 0),
+                    builder: (context, snapshot) {
+                      String name = '用户 $partnerId';
+                      String avatar = '';
+                      if (snapshot.hasData && snapshot.data != null) {
+                        name = snapshot.data!['nickname'] ?? name;
+                        avatar = snapshot.data!['avatar'] ?? '';
+                      }
+                      return ListTile(
+                        dense: true,
+                        leading: (avatar.isNotEmpty)
+                            ? CircleAvatar(
+                                radius: 16,
+                                backgroundImage: CachedNetworkImageProvider(
+                                  avatar.startsWith('http')
+                                      ? avatar
+                                      : 'http://8.136.205.255:8000$avatar',
+                                ),
+                              )
+                            : CircleAvatar(
+                                radius: 16,
+                                backgroundColor: Colors.blue.shade100,
+                                child: Text(
+                                  name.substring(0, 1),
+                                  style: const TextStyle(color: Colors.blue, fontSize: 12),
+                                ),
+                              ),
+                        title: Text(name, style: const TextStyle(fontSize: 14)),
+                        trailing: const Icon(Icons.chat, size: 16, color: Colors.blueGrey),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => ChatPage(
+                                title: name,
+                                avatar: avatar,
+                                partnerId: partnerId,
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  );
+                }).toList(),
+              ),
+            ),
+            crossFadeState: _isExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+            duration: const Duration(milliseconds: 300),
+            sizeCurve: Curves.easeInOut,
+          ),
+        ],
+      ),
     );
   }
 }

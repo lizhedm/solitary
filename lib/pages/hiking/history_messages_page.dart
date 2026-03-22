@@ -211,7 +211,7 @@ class _HistoryMessagesPageState extends State<HistoryMessagesPage> {
     final List<Map<String, dynamic>> participants = [];
     for (var partnerId in msgCounts.keys) {
       // 1. Try local contacts
-      var contact = await DatabaseHelper().getContact(partnerId);
+      var contact = await DatabaseHelper().getContact(partnerId, ownerId: currentUserId);
       String name = contact?['nickname'] ?? '用户 $partnerId';
       String? avatar = contact?['avatar'];
       

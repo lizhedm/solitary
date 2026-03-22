@@ -35,7 +35,7 @@ class MessageProvider with ChangeNotifier {
   
   Future<void> fetchContacts(int currentUserId) async {
     // 1. Load from local
-    final localContacts = await DatabaseHelper().getContacts();
+    final localContacts = await DatabaseHelper().getContacts(currentUserId);
     
     // Only notify if contacts list was empty (first load)
     if (_contacts.isEmpty) {
@@ -55,7 +55,7 @@ class MessageProvider with ChangeNotifier {
            final contact = Contact.fromJson(item);
            // Check if this contact is new or updated
            // For now, just save blindly, but we could optimize
-           await DatabaseHelper().saveContact(contact.toJson());
+           await DatabaseHelper().saveContact(contact.toJson(), ownerId: currentUserId);
         }
         
         // Update unread counts and last messages
@@ -68,7 +68,7 @@ class MessageProvider with ChangeNotifier {
   }
   
   Future<void> _refreshContactDetails(int currentUserId) async {
-    final localContacts = await DatabaseHelper().getContacts();
+    final localContacts = await DatabaseHelper().getContacts(currentUserId);
     final List<Contact> updatedContacts = [];
     // 好友列表中的联系人：取 lastMessage / unread 来自 friend_messages
     for (var c in localContacts) {
@@ -290,7 +290,12 @@ class MessageProvider with ChangeNotifier {
     }
 
     List<Map<String, dynamic>> list;
-    if (hikeId != null) {
+    
+    // Convert DateTime to integer timestamp (milliseconds) for comparison if needed
+    final int? startTs = startTime?.millisecondsSinceEpoch;
+    final int? endTs = endTime?.millisecondsSinceEpoch;
+
+    if (hikeId != null && hikeId > 0) {
       final allHikeMessages = await DatabaseHelper().getMessagesByHikeId(hikeId, currentUserId);
       list = allHikeMessages.where((msg) {
         final senderId = msg['sender_id'] as int;
@@ -298,11 +303,19 @@ class MessageProvider with ChangeNotifier {
         return (senderId == currentUserId && receiverId == partnerId) ||
             (senderId == partnerId && receiverId == currentUserId);
       }).toList();
-    } else if (startTime != null && endTime != null) {
-      final allRangeMessages = await DatabaseHelper().getMessagesByTimeRange(
-        startTime.millisecondsSinceEpoch,
-        endTime.millisecondsSinceEpoch,
-      );
+      
+      // If we got no messages by hikeId, try fallback to time range if available
+      if (list.isEmpty && startTs != null && endTs != null) {
+        final allRangeMessages = await DatabaseHelper().getMessagesByTimeRange(startTs, endTs);
+        list = allRangeMessages.where((msg) {
+          final senderId = msg['sender_id'] as int;
+          final receiverId = msg['receiver_id'] as int;
+          return (senderId == currentUserId && receiverId == partnerId) ||
+              (senderId == partnerId && receiverId == currentUserId);
+        }).toList();
+      }
+    } else if (startTs != null && endTs != null) {
+      final allRangeMessages = await DatabaseHelper().getMessagesByTimeRange(startTs, endTs);
       list = allRangeMessages.where((msg) {
         final senderId = msg['sender_id'] as int;
         final receiverId = msg['receiver_id'] as int;
@@ -312,6 +325,7 @@ class MessageProvider with ChangeNotifier {
     } else {
       list = await DatabaseHelper().getMessages(partnerId, currentUserId);
     }
+    
     return list.map((e) => Message.fromJson(e)).toList();
   }
   

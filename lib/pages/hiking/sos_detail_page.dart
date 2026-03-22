@@ -227,6 +227,8 @@ class _SOSDetailPageState extends State<SOSDetailPage> {
         }
       }
 
+      messageData['photos'] = photoUrls;
+
       final response = await ApiService().post('/messages/sos', data: {
         'latitude': lat,
         'longitude': lng,

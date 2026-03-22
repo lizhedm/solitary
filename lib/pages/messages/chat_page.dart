@@ -5,6 +5,7 @@ import '../../models/message.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/message_provider.dart';
 import 'dart:convert';
+import 'sos_event_detail_page.dart';
 
 class ChatPage extends StatefulWidget {
   final String title;
@@ -37,6 +38,8 @@ class _ChatPageState extends State<ChatPage> {
   List<Message> _messages = [];
   bool _isLoading = true;
 
+  late MessageProvider _msgProvider;
+
   @override
   void initState() {
     super.initState();
@@ -44,16 +47,17 @@ class _ChatPageState extends State<ChatPage> {
     
     // Listen for updates from MessageProvider (which polls server)
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final provider = Provider.of<MessageProvider>(context, listen: false);
-      provider.addListener(_onMessageUpdate);
+      if (mounted) {
+        _msgProvider = Provider.of<MessageProvider>(context, listen: false);
+        _msgProvider.addListener(_onMessageUpdate);
+      }
     });
   }
 
   @override
   void dispose() {
     // Remove listener
-    final provider = Provider.of<MessageProvider>(context, listen: false);
-    provider.removeListener(_onMessageUpdate);
+    _msgProvider.removeListener(_onMessageUpdate);
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -66,6 +70,8 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _loadMessages() async {
+    if (!mounted) return;
+    
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final msgProvider = Provider.of<MessageProvider>(context, listen: false);
     
@@ -90,7 +96,11 @@ class _ChatPageState extends State<ChatPage> {
       if (_messages.isNotEmpty) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (_scrollController.hasClients) {
-            _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+            _scrollController.animateTo(
+              _scrollController.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOut,
+            );
           }
         });
       }
@@ -121,7 +131,23 @@ class _ChatPageState extends State<ChatPage> {
     if (msg.type == 'sos') {
       try {
         final data = jsonDecode(msg.content);
-        return _buildSOSCard(data);
+        return GestureDetector(
+          onTap: () {
+            final fakeEvent = {
+              'message_json': msg.content,
+              'user_id': msg.senderId,
+              'created_at': msg.timestamp,
+              'photos_json': data['photos'] != null ? jsonEncode(data['photos']) : null,
+            };
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => SOSEventDetailPage(event: fakeEvent),
+              ),
+            );
+          },
+          child: _buildSOSCard(data),
+        );
       } catch (e) {
         return Text(
           msg.content,
@@ -256,12 +282,13 @@ class _ChatPageState extends State<ChatPage> {
   Widget build(BuildContext context) {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final currentUserId = authProvider.user?.id ?? 0;
+    final currentUserAvatar = authProvider.user?.avatar ?? '';
 
     return Scaffold(
       appBar: AppBar(
         title: Row(
           children: [
-            if (widget.avatar != null)
+            if (widget.avatar != null && widget.avatar!.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(right: 8.0),
                 child: CircleAvatar(
@@ -270,6 +297,18 @@ class _ChatPageState extends State<ChatPage> {
                     widget.avatar!.startsWith('http') 
                       ? widget.avatar! 
                       : 'http://8.136.205.255:8000${widget.avatar!}'
+                  ),
+                ),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.only(right: 8.0),
+                child: CircleAvatar(
+                  radius: 16,
+                  backgroundColor: Colors.orange.shade100,
+                  child: Text(
+                    widget.title.isNotEmpty ? widget.title.substring(0, 1) : 'U',
+                    style: const TextStyle(color: Colors.orange, fontSize: 12),
                   ),
                 ),
               ),
@@ -293,35 +332,83 @@ class _ChatPageState extends State<ChatPage> {
                       final msg = _messages[index];
                       final isMe = msg.senderId == currentUserId;
                       
-                      return Align(
-                        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-                        child: Container(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.7),
-                          decoration: BoxDecoration(
-                            color: isMe ? const Color(0xFF2E7D32) : Colors.grey.shade200,
-                            borderRadius: BorderRadius.only(
-                              topLeft: const Radius.circular(12),
-                              topRight: const Radius.circular(12),
-                              bottomLeft: isMe ? const Radius.circular(12) : Radius.zero,
-                              bottomRight: isMe ? Radius.zero : const Radius.circular(12),
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildMessageContent(msg, isMe),
-                              const SizedBox(height: 4),
-                              Text(
-                                _formatTime(msg.timestamp),
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: isMe ? Colors.white70 : Colors.black54,
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Row(
+                          mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (!isMe) ...[
+                              if (widget.avatar != null && widget.avatar!.isNotEmpty)
+                                CircleAvatar(
+                                  radius: 16,
+                                  backgroundImage: CachedNetworkImageProvider(
+                                    widget.avatar!.startsWith('http') 
+                                      ? widget.avatar! 
+                                      : 'http://8.136.205.255:8000${widget.avatar!}'
+                                  ),
+                                )
+                              else
+                                CircleAvatar(
+                                  radius: 16,
+                                  backgroundColor: Colors.orange.shade100,
+                                  child: Text(
+                                    widget.title.isNotEmpty ? widget.title.substring(0, 1) : 'U',
+                                    style: const TextStyle(color: Colors.orange, fontSize: 12),
+                                  ),
+                                ),
+                              const SizedBox(width: 8),
+                            ],
+                            
+                            Flexible(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.7),
+                                decoration: BoxDecoration(
+                                  color: isMe ? const Color(0xFF2E7D32) : Colors.grey.shade200,
+                                  borderRadius: BorderRadius.only(
+                                    topLeft: const Radius.circular(12),
+                                    topRight: const Radius.circular(12),
+                                    bottomLeft: isMe ? const Radius.circular(12) : Radius.zero,
+                                    bottomRight: isMe ? Radius.zero : const Radius.circular(12),
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _buildMessageContent(msg, isMe),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      _formatTime(msg.timestamp),
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: isMe ? Colors.white70 : Colors.black54,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
+                            ),
+
+                            if (isMe) ...[
+                              const SizedBox(width: 8),
+                              if (currentUserAvatar.isNotEmpty)
+                                CircleAvatar(
+                                  radius: 16,
+                                  backgroundImage: CachedNetworkImageProvider(
+                                    currentUserAvatar.startsWith('http') 
+                                      ? currentUserAvatar 
+                                      : 'http://8.136.205.255:8000$currentUserAvatar'
+                                  ),
+                                )
+                              else
+                                CircleAvatar(
+                                  radius: 16,
+                                  backgroundColor: Colors.blue.shade100,
+                                  child: const Icon(Icons.person, size: 20, color: Colors.blue),
+                                ),
                             ],
-                          ),
+                          ],
                         ),
                       );
                     },
