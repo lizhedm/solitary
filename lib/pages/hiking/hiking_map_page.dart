@@ -81,7 +81,7 @@ class _HikingMapPageState extends State<HikingMapPage>
 
   // 定位小蓝点样式（完全透明，去掉高德默认的蓝色精度圈和定位点，依赖自定义头像）
   MyLocationStyleOptions _myLocationStyleOptions = MyLocationStyleOptions(
-    true,
+    false, // 关闭高德默认定位指示（避免出现三角形/定位点），由 _addAvatarMarker 绘制圆形头像
     circleFillColor: const Color(0x00000000), // 完全透明
     circleStrokeColor: const Color(0x00000000), // 完全透明
     circleStrokeWidth: 0.0,
@@ -660,6 +660,13 @@ class _HikingMapPageState extends State<HikingMapPage>
 
         // 添加头像标记
         _addAvatarMarker(latLng);
+
+        // 如果 AMap 的 onLocationChanged 没有触发（例如关闭了默认定位指示），
+        // 也确保初次能加载一批路况/求助标记。
+        if (!_initialDataLoaded) {
+          _initialDataLoaded = true;
+          _loadFeedbacksAndSOS(center: latLng);
+        }
       }
     } catch (e) {
       debugPrint('geolocator定位失败: $e');

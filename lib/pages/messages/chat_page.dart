@@ -37,13 +37,18 @@ class _ChatPageState extends State<ChatPage> {
   final ScrollController _scrollController = ScrollController();
   List<Message> _messages = [];
   bool _isLoading = true;
+  // 只有当用户仍在接近底部时，才自动滚动到底部；否则用户向上浏览历史消息会被打断
+  bool _shouldAutoScrollToBottom = true;
+  // 用户正在拖动列表时，禁止自动回到底部
+  bool _isUserInteracting = false;
 
   late MessageProvider _msgProvider;
 
   @override
   void initState() {
     super.initState();
-    _loadMessages();
+    _loadMessages(autoScrollToBottom: true);
+    _scrollController.addListener(_handleScroll);
     
     // Listen for updates from MessageProvider (which polls server)
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -54,22 +59,38 @@ class _ChatPageState extends State<ChatPage> {
     });
   }
 
+  void _handleScroll() {
+    if (!_scrollController.hasClients) return;
+    final max = _scrollController.position.maxScrollExtent;
+    final current = _scrollController.position.pixels;
+    if (_isUserInteracting) {
+      _shouldAutoScrollToBottom = false;
+      return;
+    }
+    final atBottom = (max - current) <= 20; // 更严格阈值：接近底部才自动滚动
+    _shouldAutoScrollToBottom = atBottom;
+  }
+
   @override
   void dispose() {
     // Remove listener
     _msgProvider.removeListener(_onMessageUpdate);
     _messageController.dispose();
+    _scrollController.removeListener(_handleScroll);
     _scrollController.dispose();
     super.dispose();
   }
 
   void _onMessageUpdate() {
     if (mounted) {
-      _loadMessages();
+      // 轮询更新时：只有用户仍接近底部才自动滚动到底部，避免“无法向上滑动/被强制回到底部”
+      _loadMessages(
+        autoScrollToBottom: _shouldAutoScrollToBottom && !_isUserInteracting,
+      );
     }
   }
 
-  Future<void> _loadMessages() async {
+  Future<void> _loadMessages({required bool autoScrollToBottom}) async {
     if (!mounted) return;
     
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
@@ -77,6 +98,7 @@ class _ChatPageState extends State<ChatPage> {
     
     if (authProvider.user == null) return;
 
+    final int prevLen = _messages.length;
     final msgs = await msgProvider.getMessagesForContact(
       authProvider.user!.id,
       widget.partnerId,
@@ -87,13 +109,23 @@ class _ChatPageState extends State<ChatPage> {
     );
 
     if (mounted) {
+      // 若远端拉下来的消息“看起来没变”，就跳过 setState，避免打断滚动手势
+      final bool looksSameAsBefore = prevLen == msgs.length &&
+          prevLen > 0 &&
+          _messages.isNotEmpty &&
+          msgs.first.id == _messages.first.id &&
+          msgs.last.id == _messages.last.id;
+      if (looksSameAsBefore) return;
+
+      final bool isAppending = prevLen > 0 && msgs.length > prevLen;
       setState(() {
         _messages = msgs;
         _isLoading = false;
       });
       
       // Scroll to bottom after loading
-      if (_messages.isNotEmpty) {
+      // 只有在“新增消息追加”时才允许自动回到底部
+      if (autoScrollToBottom && _messages.isNotEmpty && (isAppending || prevLen == 0)) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (_scrollController.hasClients) {
             _scrollController.animateTo(
@@ -123,7 +155,9 @@ class _ChatPageState extends State<ChatPage> {
         content,
         isFriendConversation: widget.isFriendConversation,
       );
-      if (mounted) await _loadMessages();
+      if (mounted) {
+        await _loadMessages(autoScrollToBottom: true);
+      }
     }
   }
 
@@ -324,97 +358,108 @@ class _ChatPageState extends State<ChatPage> {
           Expanded(
             child: _isLoading 
                 ? const Center(child: CircularProgressIndicator())
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _messages.length,
-                    physics: const AlwaysScrollableScrollPhysics(
-                      parent: BouncingScrollPhysics(),
-                    ),
-                    itemBuilder: (context, index) {
-                      final msg = _messages[index];
-                      final isMe = msg.senderId == currentUserId;
-                      
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: Row(
-                          mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (!isMe) ...[
-                              if (widget.avatar != null && widget.avatar!.isNotEmpty)
-                                CircleAvatar(
-                                  radius: 16,
-                                  backgroundImage: CachedNetworkImageProvider(
-                                    widget.avatar!.startsWith('http') 
-                                      ? widget.avatar! 
-                                      : 'http://8.136.205.255:8000${widget.avatar!}'
-                                  ),
-                                )
-                              else
-                                CircleAvatar(
-                                  radius: 16,
-                                  backgroundColor: Colors.orange.shade100,
-                                  child: Text(
-                                    widget.title.isNotEmpty ? widget.title.substring(0, 1) : 'U',
-                                    style: const TextStyle(color: Colors.orange, fontSize: 12),
-                                  ),
-                                ),
-                              const SizedBox(width: 8),
-                            ],
-                            
-                            Flexible(
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                                constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.7),
-                                decoration: BoxDecoration(
-                                  color: isMe ? const Color(0xFF2E7D32) : Colors.grey.shade200,
-                                  borderRadius: BorderRadius.only(
-                                    topLeft: const Radius.circular(12),
-                                    topRight: const Radius.circular(12),
-                                    bottomLeft: isMe ? const Radius.circular(12) : Radius.zero,
-                                    bottomRight: isMe ? Radius.zero : const Radius.circular(12),
-                                  ),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    _buildMessageContent(msg, isMe),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      _formatTime(msg.timestamp),
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: isMe ? Colors.white70 : Colors.black54,
-                                      ),
+                : NotificationListener<ScrollNotification>(
+                    onNotification: (notification) {
+                      // 用户开始手势滚动时，禁止自动回到底部
+                      if (notification is ScrollStartNotification) {
+                        _isUserInteracting = true;
+                      } else if (notification is ScrollEndNotification) {
+                        _isUserInteracting = false;
+                      }
+                      return false;
+                    },
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.all(16),
+                      itemCount: _messages.length,
+                      physics: const AlwaysScrollableScrollPhysics(
+                        parent: BouncingScrollPhysics(),
+                      ),
+                      itemBuilder: (context, index) {
+                        final msg = _messages[index];
+                        final isMe = msg.senderId == currentUserId;
+                        
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Row(
+                            mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (!isMe) ...[
+                                if (widget.avatar != null && widget.avatar!.isNotEmpty)
+                                  CircleAvatar(
+                                    radius: 16,
+                                    backgroundImage: CachedNetworkImageProvider(
+                                      widget.avatar!.startsWith('http') 
+                                        ? widget.avatar! 
+                                        : 'http://8.136.205.255:8000${widget.avatar!}'
                                     ),
-                                  ],
+                                  )
+                                else
+                                  CircleAvatar(
+                                    radius: 16,
+                                    backgroundColor: Colors.orange.shade100,
+                                    child: Text(
+                                      widget.title.isNotEmpty ? widget.title.substring(0, 1) : 'U',
+                                      style: const TextStyle(color: Colors.orange, fontSize: 12),
+                                    ),
+                                  ),
+                                const SizedBox(width: 8),
+                              ],
+                              
+                              Flexible(
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                  constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.7),
+                                  decoration: BoxDecoration(
+                                    color: isMe ? const Color(0xFF2E7D32) : Colors.grey.shade200,
+                                    borderRadius: BorderRadius.only(
+                                      topLeft: const Radius.circular(12),
+                                      topRight: const Radius.circular(12),
+                                      bottomLeft: isMe ? const Radius.circular(12) : Radius.zero,
+                                      bottomRight: isMe ? Radius.zero : const Radius.circular(12),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      _buildMessageContent(msg, isMe),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        _formatTime(msg.timestamp),
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          color: isMe ? Colors.white70 : Colors.black54,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
-                            ),
-
-                            if (isMe) ...[
-                              const SizedBox(width: 8),
-                              if (currentUserAvatar.isNotEmpty)
-                                CircleAvatar(
-                                  radius: 16,
-                                  backgroundImage: CachedNetworkImageProvider(
-                                    currentUserAvatar.startsWith('http') 
-                                      ? currentUserAvatar 
-                                      : 'http://8.136.205.255:8000$currentUserAvatar'
+      
+                              if (isMe) ...[
+                                const SizedBox(width: 8),
+                                if (currentUserAvatar.isNotEmpty)
+                                  CircleAvatar(
+                                    radius: 16,
+                                    backgroundImage: CachedNetworkImageProvider(
+                                      currentUserAvatar.startsWith('http') 
+                                        ? currentUserAvatar 
+                                        : 'http://8.136.205.255:8000$currentUserAvatar'
+                                    ),
+                                  )
+                                else
+                                  CircleAvatar(
+                                    radius: 16,
+                                    backgroundColor: Colors.blue.shade100,
+                                    child: const Icon(Icons.person, size: 20, color: Colors.blue),
                                   ),
-                                )
-                              else
-                                CircleAvatar(
-                                  radius: 16,
-                                  backgroundColor: Colors.blue.shade100,
-                                  child: const Icon(Icons.person, size: 20, color: Colors.blue),
-                                ),
+                              ],
                             ],
-                          ],
-                        ),
-                      );
-                    },
+                          ),
+                        );
+                      },
+                    ),
                   ),
           ),
           if (widget.hikeId == null) // Only show input if not in history mode
