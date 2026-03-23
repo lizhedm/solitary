@@ -5,6 +5,9 @@ import '../../utils/device_utils.dart';
 import '../../services/api_service.dart';
 import '../../services/database_helper.dart';
 import '../../models/message.dart';
+import 'package:provider/provider.dart';
+import '../../providers/auth_provider.dart';
+import '../../providers/message_provider.dart';
 
 class RouteFeedbackDetailPage extends StatefulWidget {
   final Map<String, dynamic> feedback;
@@ -20,6 +23,7 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
   int _currentPhotoIndex = 0;
   int _viewCount = 0;
   int _confirmCount = 0;
+  int _forwardCount = 0;
   bool _isConfirmed = false;
   final TextEditingController _commentController = TextEditingController();
   bool _isPostingComment = false;
@@ -51,6 +55,7 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
         setState(() {
           _currentFeedback['view_count'] = data['view_count'];
           _currentFeedback['confirm_count'] = data['confirm_count'];
+          _currentFeedback['forward_count'] = data['forward_count'] ?? (_currentFeedback['forward_count'] ?? 0);
           _currentFeedback['content'] = data['content'];
           _currentFeedback['photos'] = data['photos'] is List ? jsonEncode(data['photos']) : data['photos'];
           _currentFeedback['user_name'] = data['user_name'];
@@ -58,6 +63,7 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
           
           _viewCount = data['view_count'] ?? 0;
           _confirmCount = data['confirm_count'] ?? 0;
+          _forwardCount = data['forward_count'] ?? _forwardCount;
           _isLoadingLatest = false;
         });
 
@@ -97,6 +103,7 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
 
     _viewCount = _currentFeedback['view_count'] as int? ?? 0;
     _confirmCount = _currentFeedback['confirm_count'] as int? ?? 0;
+    _forwardCount = _currentFeedback['forward_count'] as int? ?? 0;
 
     // 浏览+1（远端）
     try {
@@ -167,7 +174,8 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
     try {
       final map = Map<String, dynamic>.from(_currentFeedback)
         ..['view_count'] = _viewCount
-        ..['confirm_count'] = _confirmCount;
+        ..['confirm_count'] = _confirmCount
+        ..['forward_count'] = _forwardCount;
       await DatabaseHelper().saveFeedback(map);
     } catch (e) {
       debugPrint('sync feedback stats to local failed: $e');
@@ -454,6 +462,12 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
                         '${_comments.length}',
                         '评论',
                       ),
+                      _buildStat(
+                        Icons.share,
+                        '$_forwardCount',
+                        '转发',
+                        onTap: _openForwardSheet,
+                      ),
                     ],
                   ),
                   const SizedBox(height: 24),
@@ -634,6 +648,188 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
         child: content,
       ),
     );
+  }
+
+  Future<void> _openForwardSheet() async {
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final msgProvider = Provider.of<MessageProvider>(context, listen: false);
+    final userId = auth.user?.id;
+    if (userId == null) return;
+
+    await msgProvider.fetchContacts(userId);
+    await msgProvider.syncTempFriendships(userId);
+    final friendContacts = msgProvider.contacts;
+    final temps = await DatabaseHelper().getTempFriendships(userId);
+
+    if (!mounted) return;
+    int tab = 0; // 0 好友，1 临时会话
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => Container(
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.72),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('转发给', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  ChoiceChip(
+                    label: const Text('好友'),
+                    selected: tab == 0,
+                    onSelected: (_) => setModalState(() => tab = 0),
+                  ),
+                  const SizedBox(width: 8),
+                  ChoiceChip(
+                    label: const Text('临时会话'),
+                    selected: tab == 1,
+                    onSelected: (_) => setModalState(() => tab = 1),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: tab == 0 ? friendContacts.length : temps.length,
+                  itemBuilder: (_, i) {
+                    final partnerId = tab == 0
+                        ? friendContacts[i].id
+                        : (temps[i]['partner_id'] as int? ?? 0);
+                    final name = tab == 0
+                        ? friendContacts[i].nickname
+                        : (temps[i]['partner_name']?.toString() ?? '用户$partnerId');
+                    final avatar = tab == 0
+                        ? (friendContacts[i].avatar ?? '')
+                        : (temps[i]['partner_avatar']?.toString() ?? '');
+                    final preview = tab == 0
+                        ? (friendContacts[i].lastMessage ?? '暂无消息')
+                        : ((temps[i]['last_message']?.toString().isNotEmpty ?? false)
+                            ? temps[i]['last_message'].toString()
+                            : '暂无消息');
+                    final ts = tab == 0
+                        ? (friendContacts[i].lastMessageTime ?? 0)
+                        : (temps[i]['last_timestamp'] as int? ?? 0);
+                    return ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: Colors.grey[200],
+                        backgroundImage: avatar.isNotEmpty
+                            ? CachedNetworkImageProvider(
+                                avatar.startsWith('http') ? avatar : 'http://8.136.205.255:8000$avatar',
+                              )
+                            : null,
+                        child: avatar.isEmpty ? const Icon(Icons.person, size: 18) : null,
+                      ),
+                      title: Text(name),
+                      subtitle: Text(
+                        preview,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: Text(
+                        _formatForwardItemTime(ts),
+                        style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                      onTap: () async {
+                        Navigator.pop(ctx);
+                        await _forwardToUser(
+                          receiverId: partnerId,
+                          isFriendConversation: tab == 0,
+                          receiverName: name,
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatForwardItemTime(int ts) {
+    if (ts <= 0) return '';
+    final dt = DateTime.fromMillisecondsSinceEpoch(ts);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final thatDay = DateTime(dt.year, dt.month, dt.day);
+    final diff = today.difference(thatDay).inDays;
+    final hm =
+        '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    if (diff == 0) return hm;
+    if (diff == 1) return '昨天';
+    return '${dt.month}/${dt.day}';
+  }
+
+  Future<void> _forwardToUser({
+    required int receiverId,
+    required bool isFriendConversation,
+    required String receiverName,
+  }) async {
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final msgProvider = Provider.of<MessageProvider>(context, listen: false);
+    final userId = auth.user?.id;
+    if (userId == null) return;
+
+    final feedbackId = _currentFeedback['remote_id'] ?? _currentFeedback['id'];
+    final payload = {
+      'type': 'feedback_card',
+      'feedback_id': feedbackId,
+      'feedback_type': _currentFeedback['type'],
+      'title': '路况转发',
+      'content': _currentFeedback['content'] ?? '',
+      'address': _currentFeedback['address'] ?? '未知位置',
+      'user_name': _currentFeedback['user_name'] ?? '匿名用户',
+      'user_avatar': _currentFeedback['user_avatar'],
+      'view_count': _viewCount,
+      'confirm_count': _confirmCount,
+      'forward_count': _forwardCount,
+      'created_at': _currentFeedback['created_at'],
+      'photos': _currentFeedback['photos'],
+    };
+
+    try {
+      await msgProvider.sendMessage(
+        userId,
+        receiverId,
+        jsonEncode(payload),
+        type: 'feedback_card',
+        isFriendConversation: isFriendConversation,
+      );
+
+      if (feedbackId != null) {
+        final resp = await ApiService().post('/messages/feedback/$feedbackId/forward', data: {});
+        if (resp.statusCode == 200 && resp.data != null) {
+          setState(() {
+            _forwardCount = resp.data['forward_count'] as int? ?? (_forwardCount + 1);
+            _currentFeedback['forward_count'] = _forwardCount;
+          });
+          final map = Map<String, dynamic>.from(_currentFeedback)..['forward_count'] = _forwardCount;
+          await DatabaseHelper().saveFeedback(map);
+        }
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已转发给 $receiverName')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('转发失败: $e')),
+        );
+      }
+    }
   }
 }
 

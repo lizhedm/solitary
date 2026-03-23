@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, aliased
 from typing import List, Optional
 from app.database.database import get_db
-from app.models.message import Feedback, Message, SOSAlert, FriendMessage, FeedbackConfirm, FeedbackComment
+from app.models.message import Feedback, Message, SOSAlert, FriendMessage, TempFriendship, FeedbackConfirm, FeedbackComment
 from app.models.friendship import Friendship
 from app.routers.auth import get_current_user
 from app.models.user import User
@@ -67,6 +67,15 @@ class MessageAssociateRequest(BaseModel):
     start_time: int
     end_time: int
 
+
+class TempFriendshipOut(BaseModel):
+    partner_id: int
+    partner_name: Optional[str] = None
+    partner_avatar: Optional[str] = None
+    last_message: Optional[str] = None
+    last_message_type: Optional[str] = "text"
+    last_timestamp: int
+
 # --- Feedback Models ---
 
 class FeedbackCreate(BaseModel):
@@ -86,6 +95,7 @@ class FeedbackOut(FeedbackCreate):
     status: str
     view_count: int
     confirm_count: int
+    forward_count: int = 0
     photos: Optional[List[str]] = None
     
     class Config:
@@ -105,6 +115,10 @@ class AskQuestionRequest(BaseModel):
 class QuestionBroadcastOut(BaseModel):
     question_messages: List[MessageOut]
     recipient_count: int
+
+
+class FeedbackForwardOut(BaseModel):
+    forward_count: int
 
 # ... existing code ...
 
@@ -246,6 +260,8 @@ def ask_question(
             is_read=False
         )
         db.add(msg)
+        _upsert_temp_friendship(db, current_user.id, target_id, req.content, "question", timestamp)
+        _upsert_temp_friendship(db, target_id, current_user.id, req.content, "question", timestamp)
         created_messages.append(msg)
         
     db.commit()
@@ -270,15 +286,18 @@ def send_message(
     if not receiver:
         raise HTTPException(status_code=404, detail="Receiver not found")
         
+    now_ms = int(time.time() * 1000)
     db_msg = Message(
         sender_id=current_user.id,
         receiver_id=msg.receiver_id,
         content=msg.content,
         type=msg.type,
-        timestamp=int(time.time() * 1000),
+        timestamp=now_ms,
         is_read=False,
     )
     db.add(db_msg)
+    _upsert_temp_friendship(db, current_user.id, msg.receiver_id, msg.content, msg.type, now_ms)
+    _upsert_temp_friendship(db, msg.receiver_id, current_user.id, msg.content, msg.type, now_ms)
     db.commit()
     db.refresh(db_msg)
     return db_msg
@@ -402,6 +421,41 @@ def _are_friends(db: Session, user_id: int, other_id: int) -> bool:
     ).first() is not None
 
 
+def _upsert_temp_friendship(
+    db: Session,
+    user_id: int,
+    partner_id: int,
+    last_message: str,
+    last_message_type: str,
+    last_timestamp: int,
+):
+    """写入或更新临时会话关系（仅临时消息链路使用）。"""
+    if user_id == partner_id or partner_id == 0:
+        return
+    now_ms = int(time.time() * 1000)
+    row = db.query(TempFriendship).filter(
+        TempFriendship.user_id == user_id,
+        TempFriendship.partner_id == partner_id
+    ).first()
+    if row:
+        row.last_message = last_message
+        row.last_message_type = last_message_type
+        row.last_timestamp = last_timestamp
+        row.updated_at = now_ms
+    else:
+        db.add(
+            TempFriendship(
+                user_id=user_id,
+                partner_id=partner_id,
+                last_message=last_message,
+                last_message_type=last_message_type,
+                last_timestamp=last_timestamp,
+                created_at=now_ms,
+                updated_at=now_ms,
+            )
+        )
+
+
 @router.post("/friend-messages", response_model=FriendMessageOut)
 def send_friend_message(
     msg: FriendMessageCreate,
@@ -464,6 +518,36 @@ def mark_friend_messages_read(
     ).update({"is_read": True}, synchronize_session=False)
     db.commit()
     return {"success": True}
+
+
+@router.get("/messages/temp-friendships", response_model=List[TempFriendshipOut])
+def get_temp_friendships(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """临时会话关系列表（不含已成为好友的关系）。"""
+    rows = (
+        db.query(TempFriendship)
+        .filter(TempFriendship.user_id == current_user.id)
+        .order_by(TempFriendship.last_timestamp.desc())
+        .all()
+    )
+    results: list[TempFriendshipOut] = []
+    for row in rows:
+        if _are_friends(db, current_user.id, row.partner_id):
+            continue
+        partner = db.query(User).filter(User.id == row.partner_id).first()
+        results.append(
+            TempFriendshipOut(
+                partner_id=row.partner_id,
+                partner_name=partner.nickname if partner else None,
+                partner_avatar=partner.avatar if partner else None,
+                last_message=row.last_message,
+                last_message_type=row.last_message_type,
+                last_timestamp=row.last_timestamp,
+            )
+        )
+    return results
 
 @router.post("/messages/associate")
 def associate_messages(
@@ -657,6 +741,8 @@ def create_sos(
             is_read=False,
         )
         db.add(msg_to_target)
+        _upsert_temp_friendship(db, current_user.id, target_id, sos.message, "sos", timestamp)
+        _upsert_temp_friendship(db, target_id, current_user.id, sos.message, "sos", timestamp)
         
     db.commit()
     
@@ -877,6 +963,20 @@ def confirm_feedback(
         "confirmed": True,
         "confirm_count": fb.confirm_count,
     }
+
+
+@router.post("/messages/feedback/{feedback_id}/forward", response_model=FeedbackForwardOut)
+def mark_feedback_forwarded(
+    feedback_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    fb = db.query(Feedback).filter(Feedback.id == feedback_id).first()
+    if not fb:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+    fb.forward_count = (fb.forward_count or 0) + 1
+    db.commit()
+    return {"forward_count": fb.forward_count}
 
 
 @router.get("/messages/feedback/{feedback_id}/confirm-status")

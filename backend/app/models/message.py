@@ -38,6 +38,28 @@ class FriendMessage(Base):
     sender = relationship("User", foreign_keys=[sender_id])
     receiver = relationship("User", foreign_keys=[receiver_id])
 
+
+class TempFriendship(Base):
+    """临时会话关系：仅用于非好友期间的临时沟通会话列表。"""
+    __tablename__ = "temp_friendships"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    partner_id = Column(Integer, ForeignKey("users.id"), index=True)
+    last_message = Column(String, nullable=True)
+    last_message_type = Column(String, default="text")
+    last_timestamp = Column(BigInteger)
+    created_at = Column(BigInteger)
+    updated_at = Column(BigInteger)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "partner_id", name="uq_temp_friendship_user_partner"),
+    )
+
+    user = relationship("User", foreign_keys=[user_id])
+    partner = relationship("User", foreign_keys=[partner_id])
+
+
 class Feedback(Base):
     __tablename__ = "feedbacks"
     
@@ -56,6 +78,7 @@ class Feedback(Base):
     
     view_count = Column(Integer, default=0)
     confirm_count = Column(Integer, default=0)
+    forward_count = Column(Integer, default=0)
     
     user = relationship("User", back_populates="feedbacks")
 

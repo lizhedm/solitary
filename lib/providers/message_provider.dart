@@ -138,6 +138,23 @@ class MessageProvider with ChangeNotifier {
           }
 
           await DatabaseHelper().saveFeedback(feedbackData);
+
+          // 同步该路况的评论到本地，保证“详情评论”可离线回显
+          final feedbackId = item['id'];
+          if (feedbackId != null) {
+            try {
+              final commentsResp = await _apiService.get('/messages/feedback/$feedbackId/comments');
+              if (commentsResp.statusCode == 200 && commentsResp.data is List) {
+                for (final c in commentsResp.data) {
+                  final comment = Map<String, dynamic>.from(c);
+                  comment['feedback_id'] = feedbackId;
+                  comment['remote_id'] = comment['id'];
+                  comment.remove('id');
+                  await DatabaseHelper().saveFeedbackComment(comment);
+                }
+              }
+            } catch (_) {}
+          }
         }
 
         // Refresh local list with latest counts from server
@@ -146,6 +163,29 @@ class MessageProvider with ChangeNotifier {
       }
     } catch (e) {
       debugPrint('Fetch my feedbacks failed: $e');
+    }
+  }
+
+  Future<void> syncTempFriendships(int currentUserId) async {
+    try {
+      final resp = await _apiService.get('/messages/temp-friendships');
+      if (resp.statusCode == 200 && resp.data is List) {
+        for (final item in resp.data) {
+          final row = Map<String, dynamic>.from(item);
+          await DatabaseHelper().saveTempFriendship({
+            'owner_id': currentUserId,
+            'partner_id': row['partner_id'],
+            'partner_name': row['partner_name'],
+            'partner_avatar': row['partner_avatar'],
+            'last_message': row['last_message'],
+            'last_message_type': row['last_message_type'] ?? 'text',
+            'last_timestamp': row['last_timestamp'] ?? DateTime.now().millisecondsSinceEpoch,
+            'updated_at': DateTime.now().millisecondsSinceEpoch,
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Sync temp friendships failed: $e');
     }
   }
 
@@ -189,6 +229,7 @@ class MessageProvider with ChangeNotifier {
       debugPrint('Fetch friend messages failed: $e');
     }
     if (hasNew) {
+      await syncTempFriendships(currentUserId);
       await _refreshContactDetails(currentUserId);
       notifyListeners();
     }

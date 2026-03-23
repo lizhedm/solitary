@@ -6,6 +6,7 @@ import '../../providers/auth_provider.dart';
 import '../../providers/message_provider.dart';
 import 'dart:convert';
 import 'sos_event_detail_page.dart';
+import '../hiking/route_feedback_detail_page.dart';
 
 class ChatPage extends StatefulWidget {
   final String title;
@@ -162,6 +163,26 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Widget _buildMessageContent(Message msg, bool isMe) {
+    if (msg.type == 'feedback_card') {
+      try {
+        final data = jsonDecode(msg.content);
+        return GestureDetector(
+          onTap: () {
+            final feedback = Map<String, dynamic>.from(data);
+            if (!feedback.containsKey('id') && feedback['feedback_id'] != null) {
+              feedback['id'] = feedback['feedback_id'];
+            }
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => RouteFeedbackDetailPage(feedback: feedback),
+              ),
+            );
+          },
+          child: _buildFeedbackCard(data),
+        );
+      } catch (_) {}
+    }
     if (msg.type == 'sos') {
       try {
         final data = jsonDecode(msg.content);
@@ -193,6 +214,58 @@ class _ChatPageState extends State<ChatPage> {
     return Text(
       msg.content,
       style: TextStyle(color: isMe ? Colors.white : Colors.black87),
+    );
+  }
+
+  Widget _buildFeedbackCard(Map<String, dynamic> data) {
+    final content = data['content']?.toString() ?? '';
+    final address = data['address']?.toString() ?? '未知位置';
+    final type = data['feedback_type']?.toString() ?? 'other';
+    const labels = {
+      'blocked': '道路阻断',
+      'detour': '建议绕行',
+      'weather': '天气变化',
+      'water': '水源位置',
+      'campsite': '推荐营地',
+      'danger': '危险区域',
+      'supply': '有补给点',
+      'other': '其他信息',
+    };
+    return Container(
+      width: 260,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.blue.shade100),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.share, size: 16, color: Colors.blue),
+              const SizedBox(width: 6),
+              Text('转发路况 · ${labels[type] ?? '其他信息'}',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.blue.shade700)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(content, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.black87)),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              const Icon(Icons.location_on_outlined, size: 14, color: Colors.grey),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(address, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text('点击查看路况详情', style: TextStyle(fontSize: 11, color: Colors.blue.shade700)),
+        ],
+      ),
     );
   }
 

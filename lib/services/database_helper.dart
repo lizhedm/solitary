@@ -22,7 +22,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 16,
+      version: 17,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -95,6 +95,7 @@ class DatabaseHelper {
         status TEXT DEFAULT 'ACTIVE',
         view_count INTEGER DEFAULT 0,
         confirm_count INTEGER DEFAULT 0,
+        forward_count INTEGER DEFAULT 0,
         sync_status INTEGER DEFAULT 0,
         user_name TEXT,
         user_avatar TEXT
@@ -104,6 +105,7 @@ class DatabaseHelper {
     await _createMessageTables(db);
     await _createSOSEventTables(db);
     await _createFriendMessageTables(db);
+    await _createTempFriendshipTable(db);
     await _createFeedbackCommentsTable(db);
   }
 
@@ -187,6 +189,10 @@ class DatabaseHelper {
       // Create new index for faster range queries on messages if needed
       try { await db.execute('CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)'); } catch (_) {}
     }
+    if (oldVersion < 17) {
+      try { await db.execute('ALTER TABLE feedbacks ADD COLUMN forward_count INTEGER DEFAULT 0'); } catch (_) {}
+      await _createTempFriendshipTable(db);
+    }
   }
   
   Future<void> _createMessageTables(Database db) async {
@@ -248,6 +254,23 @@ class DatabaseHelper {
         is_read INTEGER DEFAULT 0,
         attachment_url TEXT,
         sync_status INTEGER DEFAULT 0
+      )
+    ''');
+  }
+
+  Future<void> _createTempFriendshipTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS temp_friendships(
+        local_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER,
+        partner_id INTEGER,
+        partner_name TEXT,
+        partner_avatar TEXT,
+        last_message TEXT,
+        last_message_type TEXT,
+        last_timestamp INTEGER,
+        updated_at INTEGER,
+        UNIQUE(owner_id, partner_id)
       )
     ''');
   }
@@ -621,6 +644,25 @@ class DatabaseHelper {
   Future<void> deleteFeedback(int localId) async {
     final db = await database;
     await db.delete('feedbacks', where: 'local_id = ?', whereArgs: [localId]);
+  }
+
+  Future<int> saveTempFriendship(Map<String, dynamic> row) async {
+    final db = await database;
+    return await db.insert(
+      'temp_friendships',
+      row,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getTempFriendships(int ownerId) async {
+    final db = await database;
+    return await db.query(
+      'temp_friendships',
+      where: 'owner_id = ?',
+      whereArgs: [ownerId],
+      orderBy: 'last_timestamp DESC',
+    );
   }
 
   Future<int> saveFeedbackComment(Map<String, dynamic> comment) async {
