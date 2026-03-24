@@ -401,6 +401,64 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
     );
   }
 
+  Map<String, dynamic>? _previewTag(String? content, {String? type}) {
+    final t = (type ?? '').toLowerCase();
+    if (t == 'feedback_card') {
+      return {'text': '路况卡片', 'color': Colors.blue, 'icon': Icons.description};
+    }
+    if (t == 'sos') {
+      return {'text': 'SOS卡片', 'color': Colors.red, 'icon': Icons.warning_amber_rounded};
+    }
+    if (t == 'question') {
+      return {'text': '提问卡片', 'color': Colors.deepPurple, 'icon': Icons.help_outline};
+    }
+    if (content != null && content.isNotEmpty && content.trim().startsWith('{')) {
+      try {
+        final obj = jsonDecode(content);
+        if (obj is Map) {
+          final innerType = (obj['type'] ?? '').toString().toLowerCase();
+          if (innerType == 'feedback_card') {
+            return {'text': '路况卡片', 'color': Colors.blue, 'icon': Icons.description};
+          }
+          if (innerType == 'sos_card') {
+            return {'text': 'SOS卡片', 'color': Colors.red, 'icon': Icons.warning_amber_rounded};
+          }
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  Widget _buildRecentPreview(String? content, {String? type}) {
+    final tag = _previewTag(content, type: type);
+    if (tag != null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: (tag['color'] as Color).withOpacity(0.12),
+          borderRadius: BorderRadius.circular(5),
+          border: Border.all(color: (tag['color'] as Color).withOpacity(0.25)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(tag['icon'] as IconData, size: 12, color: tag['color'] as Color),
+            const SizedBox(width: 4),
+            Text(
+              tag['text'] as String,
+              style: TextStyle(fontSize: 11, color: tag['color'] as Color, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+      );
+    }
+    return Text(
+      content ?? '暂无消息',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+
   Future<void> _refreshFriendsList() async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final msgProvider = Provider.of<MessageProvider>(context, listen: false);
@@ -459,10 +517,9 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
                         ),
                 ),
                 title: Text(contact.nickname),
-                subtitle: Text(
-                  contact.lastMessage ?? '暂无消息', 
-                  maxLines: 1, 
-                  overflow: TextOverflow.ellipsis
+                subtitle: _buildRecentPreview(
+                  contact.lastMessage,
+                  type: contact.lastMessageType,
                 ),
                 trailing: Column(
                   mainAxisAlignment: MainAxisAlignment.center,

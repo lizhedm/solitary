@@ -714,6 +714,9 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
                         : ((temps[i]['last_message']?.toString().isNotEmpty ?? false)
                             ? temps[i]['last_message'].toString()
                             : '暂无消息');
+                    final previewType = tab == 0
+                        ? friendContacts[i].lastMessageType
+                        : temps[i]['last_message_type']?.toString();
                     final ts = tab == 0
                         ? (friendContacts[i].lastMessageTime ?? 0)
                         : (temps[i]['last_timestamp'] as int? ?? 0);
@@ -728,11 +731,7 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
                         child: avatar.isEmpty ? const Icon(Icons.person, size: 18) : null,
                       ),
                       title: Text(name),
-                      subtitle: Text(
-                        preview,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      subtitle: _buildRecentPreview(preview, type: previewType),
                       trailing: Text(
                         _formatForwardItemTime(ts),
                         style: const TextStyle(fontSize: 12, color: Colors.grey),
@@ -768,6 +767,64 @@ class _RouteFeedbackDetailPageState extends State<RouteFeedbackDetailPage> {
     if (diff == 0) return hm;
     if (diff == 1) return '昨天';
     return '${dt.month}/${dt.day}';
+  }
+
+  Map<String, dynamic>? _previewTag(String? content, {String? type}) {
+    final t = (type ?? '').toLowerCase();
+    if (t == 'feedback_card') {
+      return {'text': '路况卡片', 'color': Colors.blue, 'icon': Icons.description};
+    }
+    if (t == 'sos') {
+      return {'text': 'SOS卡片', 'color': Colors.red, 'icon': Icons.warning_amber_rounded};
+    }
+    if (t == 'question') {
+      return {'text': '提问卡片', 'color': Colors.deepPurple, 'icon': Icons.help_outline};
+    }
+    if (content != null && content.isNotEmpty && content.trim().startsWith('{')) {
+      try {
+        final obj = jsonDecode(content);
+        if (obj is Map) {
+          final innerType = (obj['type'] ?? '').toString().toLowerCase();
+          if (innerType == 'feedback_card') {
+            return {'text': '路况卡片', 'color': Colors.blue, 'icon': Icons.description};
+          }
+          if (innerType == 'sos_card') {
+            return {'text': 'SOS卡片', 'color': Colors.red, 'icon': Icons.warning_amber_rounded};
+          }
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  Widget _buildRecentPreview(String? content, {String? type}) {
+    final tag = _previewTag(content, type: type);
+    if (tag != null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: (tag['color'] as Color).withOpacity(0.12),
+          borderRadius: BorderRadius.circular(5),
+          border: Border.all(color: (tag['color'] as Color).withOpacity(0.25)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(tag['icon'] as IconData, size: 12, color: tag['color'] as Color),
+            const SizedBox(width: 4),
+            Text(
+              tag['text'] as String,
+              style: TextStyle(fontSize: 11, color: tag['color'] as Color, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+      );
+    }
+    return Text(
+      content ?? '暂无消息',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
   }
 
   Future<void> _forwardToUser({

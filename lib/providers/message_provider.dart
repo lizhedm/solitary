@@ -79,6 +79,7 @@ class MessageProvider with ChangeNotifier {
          contact = contact.copyWith(
            lastMessage: lastMsg['content'],
            lastMessageTime: lastMsg['timestamp'],
+           lastMessageType: lastMsg['type'],
          );
        }
        contact = contact.copyWith(unreadCount: unread);
@@ -382,6 +383,7 @@ class Contact {
   final String nickname;
   final String? avatar;
   final String? lastMessage;
+  final String? lastMessageType;
   final int? lastMessageTime;
   final int unreadCount;
   
@@ -390,6 +392,7 @@ class Contact {
     required this.nickname, 
     this.avatar,
     this.lastMessage,
+    this.lastMessageType,
     this.lastMessageTime,
     this.unreadCount = 0
   });
@@ -400,6 +403,7 @@ class Contact {
       nickname: json['nickname'],
       avatar: json['avatar'],
       lastMessage: json['last_msg_content'], // from local DB join or manual
+      lastMessageType: json['last_msg_type'],
       lastMessageTime: json['last_msg_time'],
       unreadCount: json['unread_count'] ?? 0
     );
@@ -413,12 +417,13 @@ class Contact {
     };
   }
   
-  Contact copyWith({String? lastMessage, int? lastMessageTime, int? unreadCount}) {
+  Contact copyWith({String? lastMessage, String? lastMessageType, int? lastMessageTime, int? unreadCount}) {
     return Contact(
       id: id,
       nickname: nickname,
       avatar: avatar,
       lastMessage: lastMessage ?? this.lastMessage,
+      lastMessageType: lastMessageType ?? this.lastMessageType,
       lastMessageTime: lastMessageTime ?? this.lastMessageTime,
       unreadCount: unreadCount ?? this.unreadCount
     );
