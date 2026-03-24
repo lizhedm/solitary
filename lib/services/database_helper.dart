@@ -665,6 +665,26 @@ class DatabaseHelper {
     );
   }
 
+  Future<void> deleteTempFriendship(int ownerId, int partnerId) async {
+    final db = await database;
+    await db.delete(
+      'temp_friendships',
+      where: 'owner_id = ? AND partner_id = ?',
+      whereArgs: [ownerId, partnerId],
+    );
+  }
+
+  Future<void> deleteTempFriendshipsForPartners(int ownerId, List<int> partnerIds) async {
+    if (partnerIds.isEmpty) return;
+    final db = await database;
+    final placeholders = List.filled(partnerIds.length, '?').join(',');
+    await db.delete(
+      'temp_friendships',
+      where: 'owner_id = ? AND partner_id IN ($placeholders)',
+      whereArgs: [ownerId, ...partnerIds],
+    );
+  }
+
   Future<int> saveFeedbackComment(Map<String, dynamic> comment) async {
     final db = await database;
     return await db.insert(

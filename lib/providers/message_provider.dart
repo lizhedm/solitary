@@ -49,14 +49,17 @@ class MessageProvider with ChangeNotifier {
       final response = await _apiService.get('/friends');
       if (response.statusCode == 200) {
         final List<dynamic> data = response.data;
-        bool hasChanges = false;
+        final List<int> friendIds = [];
         
         for (var item in data) {
            final contact = Contact.fromJson(item);
+           friendIds.add(contact.id);
            // Check if this contact is new or updated
            // For now, just save blindly, but we could optimize
            await DatabaseHelper().saveContact(contact.toJson(), ownerId: currentUserId);
         }
+        // 一旦成为好友，清理本地临时会话关系（temp_friendships）
+        await DatabaseHelper().deleteTempFriendshipsForPartners(currentUserId, friendIds);
         
         // Update unread counts and last messages
         // This will trigger notifyListeners()

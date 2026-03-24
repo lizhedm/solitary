@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from app.database.database import get_db
 from app.models.friendship import Friendship
+from app.models.message import TempFriendship
 from app.models.snap import Snap
 from app.models.user import User
 from app.routers.auth import get_current_user
@@ -97,6 +98,12 @@ def snap_user(
     ).first()
     
     if is_friend:
+        # 已是好友时，清理遗留的临时会话关系
+        db.query(TempFriendship).filter(
+            ((TempFriendship.user_id == current_user.id) & (TempFriendship.partner_id == user_id)) |
+            ((TempFriendship.user_id == user_id) & (TempFriendship.partner_id == current_user.id))
+        ).delete(synchronize_session=False)
+        db.commit()
         return {"status": "FRIENDS"}
         
     # 2. Check if I already snapped this user
@@ -133,6 +140,11 @@ def snap_user(
         new_snap = Snap(user_id=current_user.id, target_id=user_id)
         db.add(friendship)
         db.add(new_snap)
+        # 成为好友后，删除双方临时会话关系
+        db.query(TempFriendship).filter(
+            ((TempFriendship.user_id == current_user.id) & (TempFriendship.partner_id == user_id)) |
+            ((TempFriendship.user_id == user_id) & (TempFriendship.partner_id == current_user.id))
+        ).delete(synchronize_session=False)
         db.commit()
         return {"status": "MATCHED"}
     else:

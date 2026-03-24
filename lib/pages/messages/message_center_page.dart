@@ -432,23 +432,28 @@ class _MessageCenterPageState extends State<MessageCenterPage> with SingleTicker
   Widget _buildRecentPreview(String? content, {String? type}) {
     final tag = _previewTag(content, type: type);
     if (tag != null) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: (tag['color'] as Color).withOpacity(0.12),
-          borderRadius: BorderRadius.circular(5),
-          border: Border.all(color: (tag['color'] as Color).withOpacity(0.25)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(tag['icon'] as IconData, size: 12, color: tag['color'] as Color),
-            const SizedBox(width: 4),
-            Text(
-              tag['text'] as String,
-              style: TextStyle(fontSize: 11, color: tag['color'] as Color, fontWeight: FontWeight.w600),
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: IntrinsicWidth(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: (tag['color'] as Color).withOpacity(0.12),
+              borderRadius: BorderRadius.circular(5),
+              border: Border.all(color: (tag['color'] as Color).withOpacity(0.25)),
             ),
-          ],
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(tag['icon'] as IconData, size: 12, color: tag['color'] as Color),
+                const SizedBox(width: 4),
+                Text(
+                  tag['text'] as String,
+                  style: TextStyle(fontSize: 11, color: tag['color'] as Color, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
         ),
       );
     }
